@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Local English Refiner",
+  "version": "0.1.0",
+  "description": "Refine English writing locally with Ollama.",
+  "permissions": [],
+  "host_permissions": [
+    "http://127.0.0.1:3030/*",
+    "http://localhost:3030/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
