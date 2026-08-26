@@ -17,7 +17,7 @@ and every request disables model thinking.
 
 ## 1. Start Ollama
 
-The default model is `gemma4:26b-mlx`, which is already installed on this Mac.
+The default model is `gemma4:12b-mlx`.
 
 Confirm that Ollama is available:
 
@@ -51,14 +51,14 @@ curl http://127.0.0.1:3030/api/refine \
 ### Configuration
 
 ```bash
-OLLAMA_MODEL=gemma4:12b-mlx npm start
+OLLAMA_MODEL=qwen3.5:9b-mlx npm start
 ```
 
 Supported environment variables:
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `OLLAMA_MODEL` | `gemma4:26b-mlx` | Ollama model name |
+| `OLLAMA_MODEL` | `gemma4:12b-mlx` | Ollama model name |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama API address |
 | `PORT` | `3030` | Backend port |
 | `HOST` | `127.0.0.1` | Backend listening address |
@@ -116,7 +116,7 @@ Response:
 ```json
 {
   "refined": "Revised text",
-  "model": "gemma4:26b-mlx",
+  "model": "gemma4:12b-mlx",
   "metrics": {
     "totalDurationMs": 2500,
     "promptTokens": 40,
@@ -137,8 +137,8 @@ The extension uses this endpoint so text appears token by token. The backend
 generates these deltas through AI SDK's `streamText` API:
 
 ```jsonl
-{"type":"start","model":"gemma4:26b-mlx"}
+{"type":"start","model":"gemma4:12b-mlx"}
 {"type":"delta","delta":"Revised"}
 {"type":"delta","delta":" text"}
-{"type":"done","refined":"Revised text","model":"gemma4:26b-mlx","metrics":{}}
+{"type":"done","refined":"Revised text","model":"gemma4:12b-mlx","metrics":{}}
 ```

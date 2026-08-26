@@ -54,7 +54,7 @@ const DEFAULTS: Readonly<AppConfig> = Object.freeze({
   host: "127.0.0.1",
   port: 3030,
   ollamaUrl: "http://127.0.0.1:11434",
-  model: "gemma4:26b-mlx",
+  model: "gemma4:12b-mlx",
   timeoutMs: 120_000,
   maxInputCharacters: 20_000,
 });
