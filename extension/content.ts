@@ -486,12 +486,6 @@
     text: string,
     onDelta: (accumulatedText: string) => void,
   ): Promise<RefinementResult> {
-    // The local test page supplies this adapter because it runs as a regular
-    // page rather than inside an installed Chrome extension.
-    if (typeof window.__localEnglishRefinerRequest === "function") {
-      return window.__localEnglishRefinerRequest(text, onDelta);
-    }
-
     return new Promise<RefinementResult>((resolve, reject) => {
       const port = chrome.runtime.connect({ name: "refine-english-stream" });
       let accumulated = "";

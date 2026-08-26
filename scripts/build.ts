@@ -10,7 +10,6 @@ await rm(output, { recursive: true, force: true });
 await Promise.all([
   mkdir(resolve(output, "backend"), { recursive: true }),
   mkdir(resolve(output, "extension"), { recursive: true }),
-  mkdir(resolve(output, "work"), { recursive: true }),
 ]);
 
 await Promise.all([
@@ -36,20 +35,11 @@ await Promise.all([
     target: "chrome120",
     sourcemap: true,
   }),
-  build({
-    entryPoints: [resolve(root, "work/test-page.ts")],
-    outfile: resolve(output, "work/test-page.js"),
-    bundle: true,
-    format: "iife",
-    platform: "browser",
-    target: "chrome120",
-    sourcemap: true,
-  }),
 ]);
 
-await Promise.all([
-  copyFile(resolve(root, "extension/manifest.json"), resolve(output, "extension/manifest.json")),
-  copyFile(resolve(root, "work/test-page.html"), resolve(output, "work/test-page.html")),
-]);
+await copyFile(
+  resolve(root, "extension/manifest.json"),
+  resolve(output, "extension/manifest.json"),
+);
 
-console.log("Built backend, Chrome extension, and test page in dist/.");
+console.log("Built backend and Chrome extension in dist/.");

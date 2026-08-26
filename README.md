@@ -4,14 +4,16 @@ A TypeScript Chrome extension and local API that refine English text with Ollama
 
 ## What is included
 
-- `backend/` — TypeScript Node API with a predefined editing prompt
+- `backend/` — Hono TypeScript API and colocated integration tests
 - `extension/` — TypeScript source for the Manifest V3 Chrome extension
 - `scripts/` — TypeScript build script
-- `test/` — TypeScript integration tests using a mock Ollama server
-- `work/` — TypeScript-powered page for manually testing the extension UI
-- `dist/` — generated backend, unpacked extension, and test page
+- `dist/` — generated backend and unpacked extension
 
-The backend listens only on `127.0.0.1`. Text generation and streaming use [Vercel AI SDK](https://ai-sdk.dev/) with [`ollama-ai-provider-v2`](https://ai-sdk.dev/providers/community-providers/ollama), and every request disables model thinking.
+The backend listens only on `127.0.0.1`. HTTP routing, middleware, and NDJSON
+streaming use [Hono](https://hono.dev/) with its official Node adapter. Text
+generation uses [Vercel AI SDK](https://ai-sdk.dev/) with
+[`ollama-ai-provider-v2`](https://ai-sdk.dev/providers/community-providers/ollama),
+and every request disables model thinking.
 
 ## 1. Start Ollama
 
@@ -90,17 +92,6 @@ npm run check
 npm test
 npm run build
 ```
-
-For a manual UI test, keep the backend running and open
-`dist/work/test-page.html` directly, or serve the generated directory:
-
-```bash
-cd dist
-python3 -m http.server 4173 --bind 127.0.0.1
-```
-
-Then visit `http://127.0.0.1:4173/work/test-page.html`. Run `npm run build`
-again after changing extension or test-page TypeScript.
 
 For automatic backend restarts during development:
 

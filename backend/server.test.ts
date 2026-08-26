@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import http, { type Server } from "node:http";
 import test from "node:test";
 
-import { createApiServer, SYSTEM_PROMPT } from "../backend/server.ts";
+import { createApp, SYSTEM_PROMPT } from "./server.ts";
 
 interface OllamaRequest {
   model: string;
@@ -85,11 +85,9 @@ function createMockOllama(onRequest: (payload: OllamaRequest) => void): Server {
 }
 
 test("health endpoint reports the configured model", async (context) => {
-  const api = createApiServer({ model: "test-model" });
-  context.after(() => close(api));
-  const apiUrl = await listen(api);
+  const app = createApp({ model: "test-model" });
 
-  const response = await fetch(`${apiUrl}/health`);
+  const response = await app.request("/health");
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     status: "ok",
@@ -106,11 +104,9 @@ test("refine endpoint uses AI SDK with thinking disabled", async (context) => {
   context.after(() => close(mockOllama));
   const ollamaUrl = await listen(mockOllama);
 
-  const api = createApiServer({ ollamaUrl, model: "test-model" });
-  context.after(() => close(api));
-  const apiUrl = await listen(api);
+  const app = createApp({ ollamaUrl, model: "test-model" });
 
-  const response = await fetch(`${apiUrl}/api/refine`, {
+  const response = await app.request("/api/refine", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text: "This are incorrect." }),
@@ -133,11 +129,9 @@ test("refine endpoint uses AI SDK with thinking disabled", async (context) => {
 });
 
 test("refine endpoint validates input before calling Ollama", async (context) => {
-  const api = createApiServer();
-  context.after(() => close(api));
-  const apiUrl = await listen(api);
+  const app = createApp();
 
-  const response = await fetch(`${apiUrl}/api/refine`, {
+  const response = await app.request("/api/refine", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text: "" }),
@@ -148,22 +142,23 @@ test("refine endpoint validates input before calling Ollama", async (context) =>
   assert.match(result.error, /non-empty/);
 });
 
-test("local file test page is allowed to call the API", async (context) => {
-  const api = createApiServer();
-  context.after(() => close(api));
-  const apiUrl = await listen(api);
+test("Chrome extensions are allowed to call the API", async (context) => {
+  const app = createApp();
 
-  const response = await fetch(`${apiUrl}/api/refine`, {
+  const response = await app.request("/api/refine", {
     method: "OPTIONS",
     headers: {
-      Origin: "null",
+      Origin: "chrome-extension://local-english-refiner",
       "Access-Control-Request-Method": "POST",
       "Access-Control-Request-Headers": "content-type",
     },
   });
 
   assert.equal(response.status, 204);
-  assert.equal(response.headers.get("access-control-allow-origin"), "null");
+  assert.equal(
+    response.headers.get("access-control-allow-origin"),
+    "chrome-extension://local-english-refiner",
+  );
 });
 
 test("stream endpoint forwards AI SDK text incrementally", async (context) => {
@@ -174,11 +169,9 @@ test("stream endpoint forwards AI SDK text incrementally", async (context) => {
   context.after(() => close(mockOllama));
   const ollamaUrl = await listen(mockOllama);
 
-  const api = createApiServer({ ollamaUrl, model: "stream-model" });
-  context.after(() => close(api));
-  const apiUrl = await listen(api);
+  const app = createApp({ ollamaUrl, model: "stream-model" });
 
-  const response = await fetch(`${apiUrl}/api/refine/stream`, {
+  const response = await app.request("/api/refine/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text: "This are incorrect." }),

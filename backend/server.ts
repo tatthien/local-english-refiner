@@ -1,11 +1,11 @@
-import http, {
-  type IncomingMessage,
-  type Server,
-  type ServerResponse,
-} from "node:http";
 import { pathToFileURL } from "node:url";
 
+import { serve, type ServerType } from "@hono/node-server";
 import { generateText, streamText, type LanguageModelUsage } from "ai";
+import { Hono, type Context } from "hono";
+import { cors } from "hono/cors";
+import { stream } from "hono/streaming";
+import { bodyLimit } from "hono/body-limit";
 import { createOllama } from "ollama-ai-provider-v2";
 
 export const SYSTEM_PROMPT = `You are an expert English editor.
@@ -59,15 +59,6 @@ const DEFAULTS: Readonly<AppConfig> = Object.freeze({
   maxInputCharacters: 20_000,
 });
 
-class HttpError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: number,
-  ) {
-    super(message);
-  }
-}
-
 function numberFromEnvironment(value: string | undefined, fallback: number): number {
   if (value === undefined || value === "") return fallback;
   const parsed = Number(value);
@@ -92,7 +83,7 @@ export function configFromEnvironment(
 
 function allowedOrigin(origin: string | undefined): string | null {
   if (!origin) return null;
-  if (origin === "null" || origin.startsWith("chrome-extension://")) return origin;
+  if (origin.startsWith("chrome-extension://")) return origin;
 
   try {
     const url = new URL(origin);
@@ -107,53 +98,6 @@ function allowedOrigin(origin: string | undefined): string | null {
   }
 
   return null;
-}
-
-function responseHeaders(
-  request: IncomingMessage,
-  contentType = "application/json; charset=utf-8",
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": contentType,
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
-  };
-  const origin = allowedOrigin(request.headers.origin);
-  if (origin) {
-    headers["Access-Control-Allow-Origin"] = origin;
-    headers.Vary = "Origin";
-  }
-  return headers;
-}
-
-function sendJson(
-  request: IncomingMessage,
-  response: ServerResponse,
-  status: number,
-  value: unknown,
-): void {
-  response.writeHead(status, responseHeaders(request));
-  response.end(JSON.stringify(value));
-}
-
-async function readJson(request: IncomingMessage, maxBytes: number): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += buffer.length;
-    if (size > maxBytes) throw new HttpError("Request body is too large.", 413);
-    chunks.push(buffer);
-  }
-
-  if (chunks.length === 0) return {};
-
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
-  } catch {
-    throw new HttpError("Request body must be valid JSON.", 400);
-  }
 }
 
 function isTextRequest(value: unknown): value is { text: string } {
@@ -266,7 +210,7 @@ export async function refineText(
 export async function streamRefinement(
   text: string,
   config: AppConfig,
-  onEvent: (event: RefinementEvent) => void,
+  onEvent: (event: RefinementEvent) => void | Promise<void>,
   fetchImplementation: FetchImplementation = fetch,
   externalSignal?: AbortSignal,
 ): Promise<Extract<RefinementEvent, { type: "done" }>> {
@@ -279,10 +223,10 @@ export async function streamRefinement(
     );
     let refined = "";
 
-    onEvent({ type: "start", model: config.model });
+    await onEvent({ type: "start", model: config.model });
     for await (const delta of result.textStream) {
       refined += delta;
-      onEvent({ type: "delta", delta });
+      await onEvent({ type: "delta", delta });
     }
 
     const trimmed = refined.trim();
@@ -294,7 +238,7 @@ export async function streamRefinement(
       model: config.model,
       metrics: metricsFromUsage(await result.usage, totalDurationMs),
     };
-    onEvent(done);
+    await onEvent(done);
     return done;
   } catch (error) {
     if (abort.signal.aborted && abort.signal.reason instanceof Error) throw abort.signal.reason;
@@ -304,112 +248,131 @@ export async function streamRefinement(
   }
 }
 
-export function createApiServer(
-  overrides: Partial<AppConfig> = {},
-  fetchImplementation: FetchImplementation = fetch,
-): Server {
-  const config: AppConfig = { ...DEFAULTS, ...overrides };
+async function parseRefinementBody(
+  context: Context,
+  config: AppConfig,
+): Promise<{ text: string } | Response> {
+  let body: unknown;
+  try {
+    body = await context.req.json<unknown>();
+  } catch {
+    return context.json({ error: "Request body must be valid JSON." }, 400);
+  }
 
-  return http.createServer(async (request, response) => {
-    const requestUrl = new URL(
-      request.url || "/",
-      `http://${request.headers.host || "localhost"}`,
+  if (!isTextRequest(body) || body.text.trim() === "") {
+    return context.json(
+      { error: "The request must include a non-empty 'text' string." },
+      400,
     );
+  }
 
-    if (request.method === "OPTIONS") {
-      const headers = responseHeaders(request);
-      headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
-      headers["Access-Control-Allow-Headers"] = "Content-Type";
-      headers["Access-Control-Max-Age"] = "86400";
-      response.writeHead(204, headers);
-      response.end();
-      return;
-    }
+  if (body.text.length > config.maxInputCharacters) {
+    return context.json(
+      { error: `Text cannot exceed ${config.maxInputCharacters} characters.` },
+      413,
+    );
+  }
 
-    if (request.method === "GET" && requestUrl.pathname === "/health") {
-      sendJson(request, response, 200, {
-        status: "ok",
-        model: config.model,
-        ollamaUrl: config.ollamaUrl,
-      });
-      return;
-    }
-
-    const isRefineRequest =
-      request.method === "POST" &&
-      (requestUrl.pathname === "/api/refine" ||
-        requestUrl.pathname === "/api/refine/stream");
-    if (!isRefineRequest) {
-      sendJson(request, response, 404, { error: "Not found." });
-      return;
-    }
-
-    try {
-      const body = await readJson(request, config.maxInputCharacters * 4);
-      if (!isTextRequest(body) || body.text.trim() === "") {
-        sendJson(request, response, 400, {
-          error: "The request must include a non-empty 'text' string.",
-        });
-        return;
-      }
-
-      if (body.text.length > config.maxInputCharacters) {
-        sendJson(request, response, 413, {
-          error: `Text cannot exceed ${config.maxInputCharacters} characters.`,
-        });
-        return;
-      }
-
-      if (requestUrl.pathname === "/api/refine/stream") {
-        const clientController = new AbortController();
-        response.on("close", () => {
-          if (!response.writableEnded) clientController.abort();
-        });
-        response.writeHead(
-          200,
-          responseHeaders(request, "application/x-ndjson; charset=utf-8"),
-        );
-        try {
-          await streamRefinement(
-            body.text,
-            config,
-            (event) => response.write(`${JSON.stringify(event)}\n`),
-            fetchImplementation,
-            clientController.signal,
-          );
-        } catch (error) {
-          if (!clientController.signal.aborted) {
-            response.write(
-              `${JSON.stringify({ type: "error", error: errorMessage(error) })}\n`,
-            );
-          }
-        } finally {
-          response.end();
-        }
-        return;
-      }
-
-      sendJson(
-        request,
-        response,
-        200,
-        await refineText(body.text, config, fetchImplementation),
-      );
-    } catch (error) {
-      sendJson(request, response, error instanceof HttpError ? error.statusCode : 502, {
-        error: errorMessage(error),
-      });
-    }
-  });
+  return body;
 }
 
-export function startServer(config: AppConfig = configFromEnvironment()): Server {
-  const server = createApiServer(config);
-  server.listen(config.port, config.host, () => {
+export function createApp(
+  overrides: Partial<AppConfig> = {},
+  fetchImplementation: FetchImplementation = fetch,
+): Hono {
+  const config: AppConfig = { ...DEFAULTS, ...overrides };
+  const app = new Hono();
+
+  app.use("*", async (context, next) => {
+    await next();
+    context.header("Cache-Control", "no-store");
+    context.header("X-Content-Type-Options", "nosniff");
+  });
+
+  app.use(
+    "*",
+    cors({
+      origin: (origin) => allowedOrigin(origin) ?? "",
+      allowMethods: ["GET", "POST", "OPTIONS"],
+      allowHeaders: ["Content-Type"],
+      maxAge: 86_400,
+    }),
+  );
+
+  const limitRequestBody = bodyLimit({
+    maxSize: config.maxInputCharacters * 4,
+    onError: (context) => context.json({ error: "Request body is too large." }, 413),
+  });
+
+  app.get("/health", (context) =>
+    context.json({
+      status: "ok",
+      model: config.model,
+      ollamaUrl: config.ollamaUrl,
+    }),
+  );
+
+  app.post("/api/refine", limitRequestBody, async (context) => {
+    const body = await parseRefinementBody(context, config);
+    if (body instanceof Response) return body;
+
+    try {
+      return context.json(await refineText(body.text, config, fetchImplementation));
+    } catch (error) {
+      return context.json({ error: errorMessage(error) }, 502);
+    }
+  });
+
+  app.post("/api/refine/stream", limitRequestBody, async (context) => {
+    const body = await parseRefinementBody(context, config);
+    if (body instanceof Response) return body;
+
+    context.header("Content-Type", "application/x-ndjson; charset=utf-8");
+    return stream(context, async (output) => {
+      const clientController = new AbortController();
+      output.onAbort(() => clientController.abort());
+
+      try {
+        await streamRefinement(
+          body.text,
+          config,
+          async (event) => {
+            await output.writeln(JSON.stringify(event));
+          },
+          fetchImplementation,
+          clientController.signal,
+        );
+      } catch (error) {
+        if (!clientController.signal.aborted) {
+          await output.writeln(
+            JSON.stringify({ type: "error", error: errorMessage(error) }),
+          );
+        }
+      }
+    });
+  });
+
+  app.notFound((context) => context.json({ error: "Not found." }, 404));
+  app.onError((error, context) =>
+    context.json({ error: errorMessage(error) }, 500),
+  );
+
+  return app;
+}
+
+export function startServer(config: AppConfig = configFromEnvironment()): ServerType {
+  const app = createApp(config);
+  return serve(
+    {
+      fetch: app.fetch,
+      hostname: config.host,
+      port: config.port,
+    },
+    () => {
     console.log(`English Refiner API: http://${config.host}:${config.port}`);
     console.log(`Ollama model: ${config.model}`);
-  });
-  return server;
+    },
+  );
 }
 
 const entryPoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
