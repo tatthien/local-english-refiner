@@ -6,8 +6,8 @@
   const MAX_TEXT_LENGTH = 20_000;
   const ICON_SIZE = 30;
   const EDGE_GAP = 6;
+  const PANEL_GAP = 12;
 
-  type EditableElement = HTMLInputElement | HTMLTextAreaElement | HTMLElement;
   type ControlSnapshot = {
     element: HTMLInputElement | HTMLTextAreaElement;
     kind: "control";
@@ -16,22 +16,21 @@
     end: number;
     text: string;
   };
-  type ContentEditableSnapshot = {
-    element: HTMLElement;
-    kind: "contenteditable";
-    fullText: string;
-    range: Range | null;
+  type RangeSnapshot = {
+    kind: "range";
+    range: Range;
     text: string;
+    editable: HTMLElement | null;
   };
-  type SourceSnapshot = ControlSnapshot | ContentEditableSnapshot;
-  type ButtonAnchor = { left: number; top: number; right: number; bottom: number };
+  type SourceSnapshot = ControlSnapshot | RangeSnapshot;
+  type SelectionCandidate = { snapshot: SourceSnapshot; rect: DOMRect };
 
-  let activeEditable: EditableElement | null = null;
+  let activeSelection: SelectionCandidate | null = null;
   let activeRequest = 0;
   let sourceSnapshot: SourceSnapshot | null = null;
   let activeStreamCancel: (() => void) | null = null;
   let streamingResultElement: HTMLParagraphElement | null = null;
-  let buttonAnchor: ButtonAnchor | null = null;
+  let panelFrame = 0;
 
   const host = document.createElement("div");
   host.id = "local-english-refiner-root";
@@ -201,25 +200,172 @@
   const copyButton = panel.querySelector<HTMLButtonElement>(".copy-button")!;
   const applyButton = panel.querySelector<HTMLButtonElement>(".apply-button")!;
 
-  // Keep the page's editor focused when interacting with our overlay.
+  // Keep the page selection intact while interacting with our overlay.
   shadow.addEventListener("mousedown", (event) => event.preventDefault());
 
-  function findEditable(target: EventTarget | null): EditableElement | null {
-    if (!(target instanceof Element)) return null;
-    const candidate = target.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only']");
-    if (!candidate || candidate.closest("#local-english-refiner-root")) return null;
-
-    if (candidate instanceof HTMLTextAreaElement) {
-      return candidate.disabled || candidate.readOnly ? null : candidate;
+  function activeTextControl(): HTMLInputElement | HTMLTextAreaElement | null {
+    const element = document.activeElement;
+    if (element instanceof HTMLTextAreaElement) {
+      return element.disabled || element.readOnly ? null : element;
     }
-
-    if (candidate instanceof HTMLInputElement) {
-      return !candidate.disabled && !candidate.readOnly && TEXT_INPUT_TYPES.has(candidate.type)
-        ? candidate
+    if (element instanceof HTMLInputElement) {
+      return !element.disabled && !element.readOnly && TEXT_INPUT_TYPES.has(element.type)
+        ? element
         : null;
     }
+    return null;
+  }
 
-    return candidate instanceof HTMLElement && candidate.isContentEditable ? candidate : null;
+  function closestEditable(node: Node | null): HTMLElement | null {
+    const element = node instanceof Element ? node : node?.parentElement;
+    const editable = element?.closest<HTMLElement>(
+      "[contenteditable='true'], [contenteditable='plaintext-only']",
+    );
+    return editable?.isContentEditable ? editable : null;
+  }
+
+  function copySelectionStyles(
+    source: HTMLInputElement | HTMLTextAreaElement,
+    target: HTMLDivElement,
+  ): void {
+    const computed = getComputedStyle(source);
+    const properties = [
+      "borderBottomWidth",
+      "borderLeftWidth",
+      "borderRightWidth",
+      "borderTopWidth",
+      "boxSizing",
+      "fontFamily",
+      "fontSize",
+      "fontStyle",
+      "fontVariant",
+      "fontWeight",
+      "letterSpacing",
+      "lineHeight",
+      "paddingBottom",
+      "paddingLeft",
+      "paddingRight",
+      "paddingTop",
+      "textAlign",
+      "textIndent",
+      "textTransform",
+      "wordSpacing",
+    ] as const;
+
+    for (const property of properties) target.style[property] = computed[property];
+  }
+
+  function controlOffsetRect(
+    element: HTMLInputElement | HTMLTextAreaElement,
+    offset: number,
+  ): DOMRect {
+    const elementRect = element.getBoundingClientRect();
+    const mirror = document.createElement("div");
+    const marker = document.createElement("span");
+    copySelectionStyles(element, mirror);
+    mirror.style.position = "fixed";
+    mirror.style.left = `${elementRect.left}px`;
+    mirror.style.top = `${elementRect.top}px`;
+    mirror.style.width = `${elementRect.width}px`;
+    mirror.style.height = `${elementRect.height}px`;
+    mirror.style.overflow = "hidden";
+    mirror.style.pointerEvents = "none";
+    mirror.style.visibility = "hidden";
+    mirror.style.whiteSpace =
+      element instanceof HTMLTextAreaElement ? "pre-wrap" : "pre";
+    mirror.style.overflowWrap = "break-word";
+
+    mirror.textContent = element.value.slice(0, offset);
+    marker.textContent = element.value.slice(offset, offset + 1) || "\u200b";
+    mirror.append(marker);
+    document.body.append(mirror);
+
+    const markerRect = marker.getBoundingClientRect();
+    mirror.remove();
+    const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight) || markerRect.height;
+    const left = Math.max(
+      elementRect.left,
+      Math.min(elementRect.right, markerRect.left - element.scrollLeft),
+    );
+    const top = Math.max(
+      elementRect.top,
+      Math.min(elementRect.bottom - lineHeight, markerRect.top - element.scrollTop),
+    );
+    return new DOMRect(left, top, 1, lineHeight);
+  }
+
+  function controlSelectionRect(
+    element: HTMLInputElement | HTMLTextAreaElement,
+    start: number,
+    end: number,
+  ): DOMRect {
+    const elementRect = element.getBoundingClientRect();
+    const startRect = controlOffsetRect(element, start);
+    const endRect = controlOffsetRect(element, end);
+    const isSingleLine = Math.abs(startRect.top - endRect.top) < 1;
+    const left = isSingleLine
+      ? Math.min(startRect.left, endRect.left)
+      : elementRect.left;
+    const right = isSingleLine
+      ? Math.max(startRect.right, endRect.right)
+      : elementRect.right;
+    const top = Math.min(startRect.top, endRect.top);
+    const bottom = Math.max(startRect.bottom, endRect.bottom);
+    return new DOMRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+  }
+
+  function currentSelection(): SelectionCandidate | null {
+    const control = activeTextControl();
+    if (control) {
+      const start = control.selectionStart ?? 0;
+      const end = control.selectionEnd ?? 0;
+      if (end <= start) return null;
+      const text = control.value.slice(start, end);
+      if (!text.trim()) return null;
+      return {
+        snapshot: {
+          kind: "control",
+          element: control,
+          fullText: control.value,
+          start,
+          end,
+          text,
+        },
+        rect: controlSelectionRect(control, start, end),
+      };
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    const text = range.toString();
+    if (!text.trim() || host.contains(range.commonAncestorContainer)) return null;
+    const rects = range.getClientRects();
+    const rect = rects.item(rects.length - 1) || range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return null;
+
+    return {
+      snapshot: {
+        kind: "range",
+        range: range.cloneRange(),
+        text,
+        editable: closestEditable(range.commonAncestorContainer),
+      },
+      rect,
+    };
+  }
+
+  function snapshotRect(snapshot: SourceSnapshot): DOMRect | null {
+    if (snapshot.kind === "control") {
+      return snapshot.element.isConnected
+        ? controlSelectionRect(snapshot.element, snapshot.start, snapshot.end)
+        : null;
+    }
+    if (!snapshot.range.startContainer.isConnected || !snapshot.range.endContainer.isConnected) {
+      return null;
+    }
+    const rects = snapshot.range.getClientRects();
+    return rects.item(rects.length - 1) || snapshot.range.getBoundingClientRect();
   }
 
   function hideButton() {
@@ -240,44 +386,41 @@
     }
     button.classList.remove("loading");
     hidePanel();
-    if (activeEditable?.isConnected) positionOverlay();
-    else hideButton();
+    sourceSnapshot = null;
+    refreshSelection();
   }
 
   function positionOverlay() {
-    if (!activeEditable?.isConnected) {
-      activeEditable = null;
+    if (!activeSelection) {
       hideButton();
-      buttonAnchor = null;
-      hidePanel();
       return;
     }
 
-    const rect = activeEditable.getBoundingClientRect();
-    if (rect.width < 42 || rect.height < 24 || rect.bottom < 0 || rect.top > innerHeight) {
+    const rect = activeSelection.rect;
+    if (rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth) {
       hideButton();
-      hidePanel();
       return;
     }
 
+    const preferredLeft = rect.right + EDGE_GAP;
+    const preferredTop = rect.bottom + EDGE_GAP;
     const left = Math.max(
       EDGE_GAP,
-      Math.min(innerWidth - ICON_SIZE - EDGE_GAP, rect.right - ICON_SIZE - EDGE_GAP),
+      Math.min(
+        innerWidth - ICON_SIZE - EDGE_GAP,
+        preferredLeft + ICON_SIZE <= innerWidth ? preferredLeft : rect.left - ICON_SIZE - EDGE_GAP,
+      ),
     );
     const top = Math.max(
       EDGE_GAP,
-      Math.min(innerHeight - ICON_SIZE - EDGE_GAP, rect.bottom - ICON_SIZE - EDGE_GAP),
+      Math.min(
+        innerHeight - ICON_SIZE - EDGE_GAP,
+        preferredTop + ICON_SIZE <= innerHeight ? preferredTop : rect.top - ICON_SIZE - EDGE_GAP,
+      ),
     );
 
     button.style.left = `${left}px`;
     button.style.top = `${top}px`;
-    buttonAnchor = {
-      left,
-      top,
-      right: left + ICON_SIZE,
-      bottom: top + ICON_SIZE,
-    };
-
     if (panel.classList.contains("visible")) {
       hideButton();
       positionPanel();
@@ -286,65 +429,76 @@
     }
   }
 
+  function refreshSelection(): void {
+    if (panel.classList.contains("visible")) return;
+    activeSelection = currentSelection();
+    positionOverlay();
+  }
+
+  let selectionFrame = 0;
+  function scheduleSelectionRefresh(): void {
+    cancelAnimationFrame(selectionFrame);
+    selectionFrame = requestAnimationFrame(refreshSelection);
+  }
+
+  function repositionSelectionOverlay(): void {
+    if (panel.classList.contains("visible") && sourceSnapshot && activeSelection) {
+      const rect = snapshotRect(sourceSnapshot);
+      if (rect) activeSelection = { snapshot: sourceSnapshot, rect };
+      positionOverlay();
+      return;
+    }
+    refreshSelection();
+  }
+
   function positionPanel() {
-    if (!buttonAnchor) return;
+    if (!activeSelection) return;
     const panelRect = panel.getBoundingClientRect();
     const width = panelRect.width || Math.min(390, innerWidth - 24);
     const height = panelRect.height;
-    const left = Math.max(12, Math.min(innerWidth - width - 12, buttonAnchor.right - width));
-    const top = Math.max(12, Math.min(innerHeight - height - 12, buttonAnchor.bottom - height));
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
+    const selectionRect = activeSelection.rect;
+    const maxLeft = innerWidth - width - PANEL_GAP;
+    const maxTop = innerHeight - height - PANEL_GAP;
+    const clampLeft = (left: number) => Math.max(PANEL_GAP, Math.min(maxLeft, left));
+    const clampTop = (top: number) => Math.max(PANEL_GAP, Math.min(maxTop, top));
+    const alignedLeft = clampLeft(selectionRect.left);
+    const alignedTop = clampTop(selectionRect.top);
+    const candidates = [
+      {
+        left: alignedLeft,
+        top: selectionRect.bottom + PANEL_GAP,
+        fits: selectionRect.bottom + PANEL_GAP + height <= innerHeight - PANEL_GAP,
+      },
+      {
+        left: alignedLeft,
+        top: selectionRect.top - height - PANEL_GAP,
+        fits: selectionRect.top - height - PANEL_GAP >= PANEL_GAP,
+      },
+      {
+        left: selectionRect.right + PANEL_GAP,
+        top: alignedTop,
+        fits: selectionRect.right + PANEL_GAP + width <= innerWidth - PANEL_GAP,
+      },
+      {
+        left: selectionRect.left - width - PANEL_GAP,
+        top: alignedTop,
+        fits: selectionRect.left - width - PANEL_GAP >= PANEL_GAP,
+      },
+    ];
+    const position = candidates.find((candidate) => candidate.fits) ??
+      (innerHeight - selectionRect.bottom >= selectionRect.top
+        ? candidates[0]!
+        : candidates[1]!);
+    panel.style.left = `${clampLeft(position.left)}px`;
+    panel.style.top = `${clampTop(position.top)}px`;
   }
 
-  function captureSource(element: EditableElement): SourceSnapshot {
-    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-      const value = element.value;
-      const selectionStart = element.selectionStart ?? 0;
-      const selectionEnd = element.selectionEnd ?? 0;
-      const hasSelection = selectionEnd > selectionStart;
-      const start = hasSelection ? selectionStart : 0;
-      const end = hasSelection ? selectionEnd : value.length;
-      return {
-        element,
-        kind: "control",
-        fullText: value,
-        start,
-        end,
-        text: value.slice(start, end),
-      };
-    }
-
-    const selection = window.getSelection();
-    const hasContainedSelection =
-      selection &&
-      !selection.isCollapsed &&
-      selection.rangeCount > 0 &&
-      element.contains(selection.anchorNode) &&
-      element.contains(selection.focusNode);
-
-    if (hasContainedSelection) {
-      const range = selection.getRangeAt(0).cloneRange();
-      return {
-        element,
-        kind: "contenteditable",
-        fullText: element.innerText || element.textContent || "",
-        range,
-        text: range.toString(),
-      };
-    }
-
-    const fullText = element.innerText || element.textContent || "";
-    return {
-      element,
-      kind: "contenteditable",
-      fullText,
-      range: null,
-      text: fullText,
-    };
+  function schedulePanelPosition(): void {
+    cancelAnimationFrame(panelFrame);
+    panelFrame = requestAnimationFrame(positionPanel);
   }
 
-  function dispatchEditEvents(element: EditableElement, insertedText: string): void {
+  function dispatchEditEvents(element: HTMLElement, insertedText: string): void {
     try {
       element.dispatchEvent(
         new InputEvent("input", {
@@ -373,17 +527,16 @@
   }
 
   function applyRevision(snapshot: SourceSnapshot, revisedText: string): void {
-    if (!snapshot.element.isConnected) {
-      throw new Error("The original editor is no longer available.");
-    }
-
-    snapshot.element.focus();
     if (snapshot.kind === "control") {
       const { element } = snapshot;
+      if (!element.isConnected) {
+        throw new Error("The original editor is no longer available.");
+      }
       const current = element.value;
       if (current !== snapshot.fullText) {
         throw new Error("The text changed while it was being refined. Please try again.");
       }
+      element.focus();
       const updated = `${current.slice(0, snapshot.start)}${revisedText}${current.slice(snapshot.end)}`;
       setControlValue(element, updated);
       const caret = snapshot.start + revisedText.length;
@@ -392,26 +545,23 @@
       return;
     }
 
-    const { element } = snapshot;
-    const currentText = element.innerText || element.textContent || "";
-    if (currentText !== snapshot.fullText) {
+    const { range } = snapshot;
+    if (!range.startContainer.isConnected || !range.endContainer.isConnected) {
+      throw new Error("The original selection is no longer available.");
+    }
+    if (range.toString() !== snapshot.text) {
       throw new Error("The text changed while it was being refined. Please try again.");
     }
 
-    if (snapshot.range && element.contains(snapshot.range.commonAncestorContainer)) {
-      const range = snapshot.range;
-      range.deleteContents();
-      const textNode = document.createTextNode(revisedText);
-      range.insertNode(textNode);
-      range.setStartAfter(textNode);
-      range.collapse(true);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    } else {
-      element.textContent = revisedText;
-    }
-    dispatchEditEvents(element, revisedText);
+    range.deleteContents();
+    const textNode = document.createTextNode(revisedText);
+    range.insertNode(textNode);
+    range.setStartAfter(textNode);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    if (snapshot.editable) dispatchEditEvents(snapshot.editable, revisedText);
   }
 
   function showLoading() {
@@ -434,10 +584,10 @@
       panelActions.classList.remove("visible");
       panel.classList.add("visible");
       hideButton();
-      requestAnimationFrame(() => positionPanel());
     }
     streamingResultElement.textContent = text;
     panelBody.scrollTop = panelBody.scrollHeight;
+    schedulePanelPosition();
   }
 
   function showError(message: string): void {
@@ -451,7 +601,7 @@
     panel.classList.add("visible");
     hideButton();
     button.classList.remove("loading");
-    requestAnimationFrame(() => positionPanel());
+    schedulePanelPosition();
   }
 
   function showResult(result: RefinementResult): void {
@@ -479,7 +629,7 @@
     panel.classList.add("visible");
     hideButton();
     button.classList.remove("loading");
-    requestAnimationFrame(() => positionPanel());
+    schedulePanelPosition();
   }
 
   function requestRefinement(
@@ -547,9 +697,9 @@
   }
 
   button.addEventListener("click", async () => {
-    if (!activeEditable || button.classList.contains("loading")) return;
+    if (!activeSelection || button.classList.contains("loading")) return;
 
-    const snapshot = captureSource(activeEditable);
+    const snapshot = activeSelection.snapshot;
     const text = snapshot.text.trim();
     if (!text) {
       showError("Enter or select some text first.");
@@ -601,37 +751,9 @@
     }
   });
 
-  document.addEventListener(
-    "focusin",
-    (event) => {
-      const editable = findEditable(event.target);
-      if (!editable) {
-        if (!shadow.activeElement) {
-          activeEditable = null;
-          hideButton();
-          closePanel();
-        }
-        return;
-      }
-      activeEditable = editable;
-      closePanel();
-      positionOverlay();
-    },
-    true,
-  );
-
-  document.addEventListener(
-    "input",
-    (event) => {
-      const editable = findEditable(event.target);
-      if (editable) {
-        activeEditable = editable;
-        positionOverlay();
-      }
-    },
-    true,
-  );
-
-  document.addEventListener("scroll", positionOverlay, true);
-  window.addEventListener("resize", positionOverlay);
+  document.addEventListener("mouseup", scheduleSelectionRefresh, true);
+  document.addEventListener("keyup", scheduleSelectionRefresh, true);
+  document.addEventListener("input", scheduleSelectionRefresh, true);
+  document.addEventListener("scroll", repositionSelectionOverlay, true);
+  window.addEventListener("resize", repositionSelectionOverlay);
 })();

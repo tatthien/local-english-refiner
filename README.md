@@ -1,6 +1,6 @@
 # Local English Refiner
 
-A TypeScript Chrome extension and local API that refine English text with Ollama. The extension adds a floating button to text inputs, textareas, and content-editable fields. It streams each revision into a preview before changing the page.
+A TypeScript Chrome extension and local API that refine English text with Ollama. Select text in an input, textarea, content-editable field, or regular webpage to display a floating refinement button. The extension streams each revision into a preview before changing the page.
 
 ## What is included
 
@@ -77,11 +77,11 @@ The extension cannot run on protected Chrome pages such as `chrome://extensions`
 
 ## Using it
 
-1. Focus a text input, textarea, or content-editable field.
-2. Optionally select only the text you want to refine.
-3. Click the green sparkle button at the lower-right edge of the field.
+1. Select the text you want to refine.
+2. Click the green sparkle button beside the selection.
+3. The preview opens and begins streaming the revision automatically.
 4. Review the result as it streams from Ollama.
-5. Click **Apply** to replace the original text or **Copy** to copy it.
+5. Click **Apply** to replace exactly the selected text or **Copy** to copy it.
 
 The preview includes the model's generation rate and total response time when Ollama reports them.
 
