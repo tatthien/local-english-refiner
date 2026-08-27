@@ -20,7 +20,7 @@
     kind: "range";
     range: Range;
     text: string;
-    editable: HTMLElement | null;
+    editable: HTMLElement;
   };
   type SourceSnapshot = ControlSnapshot | RangeSnapshot;
   type SelectionCandidate = { snapshot: SourceSnapshot; rect: DOMRect };
@@ -337,6 +337,9 @@
 
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+    const anchorEditable = closestEditable(selection.anchorNode);
+    const focusEditable = closestEditable(selection.focusNode);
+    if (!anchorEditable || anchorEditable !== focusEditable) return null;
     const range = selection.getRangeAt(0);
     const text = range.toString();
     if (!text.trim() || host.contains(range.commonAncestorContainer)) return null;
@@ -349,7 +352,7 @@
         kind: "range",
         range: range.cloneRange(),
         text,
-        editable: closestEditable(range.commonAncestorContainer),
+        editable: anchorEditable,
       },
       rect,
     };
@@ -561,7 +564,7 @@
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    if (snapshot.editable) dispatchEditEvents(snapshot.editable, revisedText);
+    dispatchEditEvents(snapshot.editable, revisedText);
   }
 
   function showLoading() {
