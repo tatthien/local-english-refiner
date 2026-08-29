@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Local English Refiner",
   "version": "0.1.0",
-  "description": "Refine English writing locally with Ollama.",
+  "description": "Refine English writing with a local GGUF model.",
   "permissions": [],
   "host_permissions": [
     "http://127.0.0.1:3030/*",

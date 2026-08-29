@@ -1,5 +1,5 @@
 {
-  "name": "ollama-english-refiner",
+  "name": "local-english-refiner",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,9 +15,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
-    "ai": "^7.0.79",
     "hono": "^4.13.5",
-    "ollama-ai-provider-v2": "^4.0.1",
+    "node-llama-cpp": "^3.20.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

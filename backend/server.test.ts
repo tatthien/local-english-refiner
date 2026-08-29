@@ -1,90 +1,47 @@
 import assert from "node:assert/strict";
-import http, { type Server } from "node:http";
 import test from "node:test";
 
-import { createApp, SYSTEM_PROMPT } from "./server.ts";
+import type {
+  GenerationOptions,
+  GenerationResult,
+  TextRefiner,
+} from "./llama-refiner.ts";
+import { configFromEnvironment, createApp } from "./server.ts";
 
-interface OllamaRequest {
-  model: string;
-  messages: Array<{ role: string; content: string }>;
-  think: boolean;
-  stream: boolean;
-  temperature: number;
-  top_p: number;
-  max_output_tokens: number;
-  options: { num_predict: number };
+class MockRefiner implements TextRefiner {
+  calls: Array<{ text: string; options: GenerationOptions }> = [];
+
+  constructor(
+    private readonly chunks: string[] = ["This is the revised text."],
+    private readonly usage = { promptTokens: 20, outputTokens: 12 },
+  ) {}
+
+  async generate(text: string, options: GenerationOptions): Promise<GenerationResult> {
+    this.calls.push({ text, options });
+    for (const chunk of this.chunks) options.onTextChunk?.(chunk);
+
+    return {
+      text: this.chunks.join(""),
+      ...this.usage,
+    };
+  }
 }
 
-function listen(server: Server): Promise<string> {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("The test server did not expose a TCP port."));
-        return;
-      }
-      resolve(`http://127.0.0.1:${address.port}`);
-    });
+test("configuration uses local model settings", () => {
+  const config = configFromEnvironment({
+    MODEL: "/models/editor.gguf",
+    CONTEXT_SIZE: "4096",
+    MAX_OUTPUT_TOKENS: "512",
+    INFERENCE_TIMEOUT_MS: "30000",
   });
-}
 
-function close(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
+  assert.equal(config.model, "/models/editor.gguf");
+  assert.equal(config.contextSize, 4096);
+  assert.equal(config.maxOutputTokens, 512);
+  assert.equal(config.timeoutMs, 30_000);
+});
 
-function ollamaChunk(
-  model: string,
-  content: string,
-  done: boolean,
-): Record<string, unknown> {
-  return {
-    model,
-    created_at: new Date().toISOString(),
-    message: { role: "assistant", content },
-    done,
-    ...(done
-      ? {
-          done_reason: "stop",
-          total_duration: 2_000_000_000,
-          prompt_eval_count: 20,
-          prompt_eval_duration: 500_000_000,
-          eval_count: 12,
-          eval_duration: 1_000_000_000,
-        }
-      : {}),
-  };
-}
-
-function createMockOllama(onRequest: (payload: OllamaRequest) => void): Server {
-  return http.createServer(async (request, response) => {
-    assert.equal(request.url, "/api/chat");
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as OllamaRequest;
-    onRequest(payload);
-
-    if (payload.stream) {
-      response.writeHead(200, { "Content-Type": "application/x-ndjson" });
-      response.write(`${JSON.stringify(ollamaChunk(payload.model, "This is ", false))}\n`);
-      response.end(
-        `${JSON.stringify(ollamaChunk(payload.model, "the revised text.", true))}\n`,
-      );
-      return;
-    }
-
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      JSON.stringify(ollamaChunk(payload.model, "This is the revised text.", true)),
-    );
-  });
-}
-
-test("health endpoint reports the configured model", async (context) => {
+test("health endpoint reports the configured model", async () => {
   const app = createApp({ model: "test-model" });
 
   const response = await app.request("/health");
@@ -92,19 +49,12 @@ test("health endpoint reports the configured model", async (context) => {
   assert.deepEqual(await response.json(), {
     status: "ok",
     model: "test-model",
-    ollamaUrl: "http://127.0.0.1:11434",
   });
 });
 
-test("refine endpoint uses AI SDK with thinking disabled", async (context) => {
-  let receivedPayload: OllamaRequest | undefined;
-  const mockOllama = createMockOllama((payload) => {
-    receivedPayload = payload;
-  });
-  context.after(() => close(mockOllama));
-  const ollamaUrl = await listen(mockOllama);
-
-  const app = createApp({ ollamaUrl, model: "test-model" });
+test("refine endpoint delegates to the local model", async () => {
+  const refiner = new MockRefiner();
+  const app = createApp({ model: "test-model" }, refiner);
 
   const response = await app.request("/api/refine", {
     method: "POST",
@@ -115,21 +65,21 @@ test("refine endpoint uses AI SDK with thinking disabled", async (context) => {
   assert.equal(response.status, 200);
   const result = (await response.json()) as {
     refined: string;
+    model: string;
     metrics: { promptTokens: number; outputTokens: number };
   };
   assert.equal(result.refined, "This is the revised text.");
+  assert.equal(result.model, "test-model");
   assert.equal(result.metrics.promptTokens, 20);
   assert.equal(result.metrics.outputTokens, 12);
-  assert.ok(receivedPayload);
-  assert.equal(receivedPayload.think, false);
-  assert.equal(receivedPayload.stream, false);
-  assert.equal(receivedPayload.messages[0]?.content, SYSTEM_PROMPT);
-  assert.equal(receivedPayload.messages[1]?.content, "This are incorrect.");
-  assert.equal(receivedPayload.options.num_predict, 1024);
+  assert.equal(refiner.calls.length, 1);
+  assert.equal(refiner.calls[0]?.text, "This are incorrect.");
+  assert.equal(refiner.calls[0]?.options.signal.aborted, false);
 });
 
-test("refine endpoint validates input before calling Ollama", async (context) => {
-  const app = createApp();
+test("refine endpoint validates input before running inference", async () => {
+  const refiner = new MockRefiner();
+  const app = createApp({}, refiner);
 
   const response = await app.request("/api/refine", {
     method: "POST",
@@ -140,9 +90,10 @@ test("refine endpoint validates input before calling Ollama", async (context) =>
   assert.equal(response.status, 400);
   const result = (await response.json()) as { error: string };
   assert.match(result.error, /non-empty/);
+  assert.equal(refiner.calls.length, 0);
 });
 
-test("Chrome extensions are allowed to call the API", async (context) => {
+test("Chrome extensions are allowed to call the API", async () => {
   const app = createApp();
 
   const response = await app.request("/api/refine", {
@@ -161,15 +112,9 @@ test("Chrome extensions are allowed to call the API", async (context) => {
   );
 });
 
-test("stream endpoint forwards AI SDK text incrementally", async (context) => {
-  let receivedPayload: OllamaRequest | undefined;
-  const mockOllama = createMockOllama((payload) => {
-    receivedPayload = payload;
-  });
-  context.after(() => close(mockOllama));
-  const ollamaUrl = await listen(mockOllama);
-
-  const app = createApp({ ollamaUrl, model: "stream-model" });
+test("stream endpoint forwards model output incrementally", async () => {
+  const refiner = new MockRefiner(["This is ", "the revised text."]);
+  const app = createApp({ model: "stream-model" }, refiner);
 
   const response = await app.request("/api/refine/stream", {
     method: "POST",
@@ -189,7 +134,5 @@ test("stream endpoint forwards AI SDK text incrementally", async (context) => {
   );
   assert.equal(`${events[1]?.delta}${events[2]?.delta}`, "This is the revised text.");
   assert.equal(events[3]?.refined, "This is the revised text.");
-  assert.ok(receivedPayload);
-  assert.equal(receivedPayload.think, false);
-  assert.equal(receivedPayload.stream, true);
+  assert.equal(refiner.calls[0]?.options.signal.aborted, false);
 });
