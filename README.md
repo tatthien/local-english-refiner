@@ -68,6 +68,54 @@ Supported environment variables:
 | `MAX_INPUT_CHARACTERS` | `20000` | Maximum accepted text length |
 | `LOG_LEVEL` | `info` | Minimum JSON log level: `debug`, `info`, `warn`, or `error` |
 
+### Run in the background with PM2
+
+On macOS, PM2 can keep the native Metal-accelerated backend running in the
+background and restart it after a crash. Install PM2, build the project, and
+start exactly one backend process:
+
+```bash
+npm install --global pm2
+npm run build
+
+MODEL='hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M' \
+pm2 start dist/backend/server.js \
+  --name local-english-refiner \
+  --instances 1
+```
+
+Do not use PM2 cluster mode or `--instances max`. Every process would load its
+own copy of the model and consume additional memory.
+
+Useful management commands:
+
+```bash
+pm2 status
+pm2 logs local-english-refiner
+pm2 restart local-english-refiner
+pm2 stop local-english-refiner
+pm2 delete local-english-refiner
+```
+
+When changing environment variables, restart with `--update-env`:
+
+```bash
+MODEL='hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M' \
+pm2 restart local-english-refiner --update-env
+```
+
+To restore the backend automatically after logging in or restarting macOS:
+
+```bash
+pm2 startup
+```
+
+Run the setup command printed by PM2, then save the current process list:
+
+```bash
+pm2 save
+```
+
 ## 2. Start with Docker
 
 Docker Compose builds and starts the backend without requiring a local Node.js
