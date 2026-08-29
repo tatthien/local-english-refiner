@@ -1,0 +1,8 @@
+.git
+.gitignore
+.DS_Store
+dist
+node_modules
+models
+*.gguf
+*.log

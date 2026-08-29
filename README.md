@@ -68,7 +68,70 @@ Supported environment variables:
 | `MAX_INPUT_CHARACTERS` | `20000` | Maximum accepted text length |
 | `LOG_LEVEL` | `info` | Minimum JSON log level: `debug`, `info`, `warn`, or `error` |
 
-## 2. Load the Chrome extension
+## 2. Start with Docker
+
+Docker Compose builds and starts the backend without requiring a local Node.js
+installation:
+
+```bash
+docker compose up --build
+```
+
+The API is available at `http://127.0.0.1:3030`. The first startup downloads
+the configured model before the API becomes healthy. A named Docker volume
+stores the model so subsequent containers reuse it.
+
+Override the model or host port through environment variables:
+
+```bash
+MODEL='hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M' \
+API_PORT=3031 \
+docker compose up --build
+```
+
+For a persistent model selection, create a `.env` file beside
+`docker-compose.yml`:
+
+```dotenv
+MODEL=hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M
+CONTEXT_SIZE=4096
+```
+
+Then recreate the service. Changing the model does not require rebuilding the
+image:
+
+```bash
+docker compose up -d
+```
+
+Check the resolved model and other Compose settings with:
+
+```bash
+docker compose config
+```
+
+The selected model is downloaded on first startup and retained in the
+`model-cache` volume.
+
+Run in the background and inspect the Pino logs:
+
+```bash
+docker compose up --build -d
+docker compose logs -f api
+```
+
+Stop the service without deleting the downloaded model:
+
+```bash
+docker compose down
+```
+
+To delete the service and model volume, run `docker compose down --volumes`.
+The included image uses CPU inference. Docker Desktop on macOS does not expose
+Apple Metal acceleration to Linux containers, so running through Node.js
+directly is faster on Apple Silicon.
+
+## 3. Load the Chrome extension
 
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.

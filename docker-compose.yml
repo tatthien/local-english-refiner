@@ -1,0 +1,24 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: local-english-refiner:latest
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${API_PORT:-3030}:3030"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3030
+      MODEL: ${MODEL:-hf:bartowski/google_gemma-3-12b-it-GGUF:Q4_K_M}
+      CONTEXT_SIZE: ${CONTEXT_SIZE:-8192}
+      MAX_OUTPUT_TOKENS: ${MAX_OUTPUT_TOKENS:-1024}
+      INFERENCE_TIMEOUT_MS: ${INFERENCE_TIMEOUT_MS:-120000}
+      MAX_INPUT_CHARACTERS: ${MAX_INPUT_CHARACTERS:-20000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - model-cache:/home/node/.node-llama-cpp/models
+
+volumes:
+  model-cache:
