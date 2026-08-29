@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import { serve, type ServerType } from "@hono/node-server";
@@ -11,6 +12,12 @@ import {
   type GenerationResult,
   type TextRefiner,
 } from "./llama-refiner.ts";
+import {
+  createLogger,
+  parseLogLevel,
+  type Logger,
+  type LogLevel,
+} from "./logger.ts";
 
 export { SYSTEM_PROMPT };
 
@@ -22,6 +29,7 @@ export interface AppConfig {
   contextSize: number;
   maxOutputTokens: number;
   maxInputCharacters: number;
+  logLevel: LogLevel;
 }
 
 export interface RefinementMetrics {
@@ -42,6 +50,14 @@ export type RefinementEvent =
   | { type: "delta"; delta: string }
   | ({ type: "done" } & RefinementResult);
 
+type AppEnvironment = {
+  Variables: {
+    requestId: string;
+  };
+};
+
+type AppContext = Context<AppEnvironment>;
+
 const DEFAULTS: Readonly<AppConfig> = Object.freeze({
   host: "127.0.0.1",
   port: 3030,
@@ -50,6 +66,7 @@ const DEFAULTS: Readonly<AppConfig> = Object.freeze({
   contextSize: 8_192,
   maxOutputTokens: 1_024,
   maxInputCharacters: 20_000,
+  logLevel: "info",
 });
 
 function numberFromEnvironment(value: string | undefined, fallback: number): number {
@@ -78,6 +95,7 @@ export function configFromEnvironment(
       environment.MAX_INPUT_CHARACTERS,
       DEFAULTS.maxInputCharacters,
     ),
+    logLevel: parseLogLevel(environment.LOG_LEVEL),
   };
 }
 
@@ -230,7 +248,7 @@ export async function streamRefinement(
 }
 
 async function parseRefinementBody(
-  context: Context,
+  context: AppContext,
   config: AppConfig,
 ): Promise<{ text: string } | Response> {
   let body: unknown;
@@ -260,15 +278,35 @@ async function parseRefinementBody(
 export function createApp(
   overrides: Partial<AppConfig> = {},
   refiner?: TextRefiner,
-): Hono {
+  logger?: Logger,
+): Hono<AppEnvironment> {
   const config: AppConfig = { ...DEFAULTS, ...overrides };
-  const textRefiner = refiner ?? new LlamaCppRefiner(config);
-  const app = new Hono();
+  const appLogger = logger ?? createLogger(config.logLevel);
+  const textRefiner = refiner ?? new LlamaCppRefiner(config, appLogger);
+  const app = new Hono<AppEnvironment>();
 
   app.use("*", async (context, next) => {
-    await next();
-    context.header("Cache-Control", "no-store");
-    context.header("X-Content-Type-Options", "nosniff");
+    const requestId = context.req.header("X-Request-ID")?.trim() || randomUUID();
+    const startedAt = performance.now();
+    context.set("requestId", requestId);
+    context.header("X-Request-ID", requestId);
+
+    try {
+      await next();
+    } finally {
+      context.header("Cache-Control", "no-store");
+      context.header("X-Content-Type-Options", "nosniff");
+      appLogger.info(
+        {
+          requestId,
+          method: context.req.method,
+          path: context.req.path,
+          status: context.res.status,
+          durationMs: Math.round(performance.now() - startedAt),
+        },
+        "http.request.completed",
+      );
+    }
   });
 
   app.use(
@@ -276,7 +314,8 @@ export function createApp(
     cors({
       origin: (origin) => allowedOrigin(origin) ?? "",
       allowMethods: ["GET", "POST", "OPTIONS"],
-      allowHeaders: ["Content-Type"],
+      allowHeaders: ["Content-Type", "X-Request-ID"],
+      exposeHeaders: ["X-Request-ID"],
       maxAge: 86_400,
     }),
   );
@@ -300,6 +339,15 @@ export function createApp(
     try {
       return context.json(await refineText(body.text, config, textRefiner));
     } catch (error) {
+      appLogger.error(
+        {
+          requestId: context.get("requestId"),
+          path: context.req.path,
+          inputCharacters: body.text.length,
+          err: error,
+        },
+        "refinement.request.failed",
+      );
       return context.json({ error: errorMessage(error) }, 502);
     }
   });
@@ -324,6 +372,18 @@ export function createApp(
           clientController.signal,
         );
       } catch (error) {
+        const logContext = {
+          requestId: context.get("requestId"),
+          path: context.req.path,
+          inputCharacters: body.text.length,
+          clientAborted: clientController.signal.aborted,
+          err: error,
+        };
+        if (clientController.signal.aborted) {
+          appLogger.warn(logContext, "refinement.stream.aborted");
+        } else {
+          appLogger.error(logContext, "refinement.stream.failed");
+        }
         if (!clientController.signal.aborted) {
           await output.writeln(
             JSON.stringify({ type: "error", error: errorMessage(error) }),
@@ -334,9 +394,18 @@ export function createApp(
   });
 
   app.notFound((context) => context.json({ error: "Not found." }, 404));
-  app.onError((error, context) =>
-    context.json({ error: errorMessage(error) }, 500),
-  );
+  app.onError((error, context) => {
+    appLogger.error(
+      {
+        requestId: context.get("requestId"),
+        method: context.req.method,
+        path: context.req.path,
+        err: error,
+      },
+      "http.request.failed",
+    );
+    return context.json({ error: errorMessage(error) }, 500);
+  });
 
   return app;
 }
@@ -344,10 +413,10 @@ export function createApp(
 export async function startServer(
   config: AppConfig = configFromEnvironment(),
 ): Promise<ServerType> {
-  const refiner = new LlamaCppRefiner(config);
-  console.log(`Loading model: ${config.model}`);
+  const logger = createLogger(config.logLevel);
+  const refiner = new LlamaCppRefiner(config, logger);
   await refiner.initialize();
-  const app = createApp(config, refiner);
+  const app = createApp(config, refiner, logger);
   return serve(
     {
       fetch: app.fetch,
@@ -355,8 +424,15 @@ export async function startServer(
       port: config.port,
     },
     () => {
-      console.log(`English Refiner API: http://${config.host}:${config.port}`);
-      console.log(`Model: ${config.model}`);
+      logger.info(
+        {
+          url: `http://${config.host}:${config.port}`,
+          model: config.model,
+          contextSize: config.contextSize,
+          maxOutputTokens: config.maxOutputTokens,
+        },
+        "backend.started",
+      );
     },
   );
 }

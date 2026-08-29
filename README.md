@@ -66,6 +66,7 @@ Supported environment variables:
 | `PORT` | `3030` | Backend port |
 | `HOST` | `127.0.0.1` | Backend listening address |
 | `MAX_INPUT_CHARACTERS` | `20000` | Maximum accepted text length |
+| `LOG_LEVEL` | `info` | Minimum JSON log level: `debug`, `info`, `warn`, or `error` |
 
 ## 2. Load the Chrome extension
 
@@ -100,6 +101,14 @@ For automatic backend restarts during development:
 ```bash
 npm run dev
 ```
+
+### Logging
+
+Backend logs use [Pino](https://getpino.io/) and are emitted as newline-delimited
+JSON so they can be searched or ingested by logging tools. Set `LOG_LEVEL=debug`
+for inference-start details. Logs include
+request IDs, durations, status codes, token usage, and serialized errors. Input
+text is never logged; only its character count is recorded.
 
 ## API
 

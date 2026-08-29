@@ -4,6 +4,7 @@ import {
   resolveModelFile,
   type LlamaModel,
 } from "node-llama-cpp";
+import { createLogger, type Logger } from "./logger.ts";
 
 export const SYSTEM_PROMPT = `You are an expert English editor.
 
@@ -41,10 +42,12 @@ export interface TextRefiner {
 
 export class LlamaCppRefiner implements TextRefiner {
   readonly #config: LlamaRefinerConfig;
+  readonly #logger: Logger;
   #modelPromise: Promise<LlamaModel> | undefined;
 
-  constructor(config: LlamaRefinerConfig) {
+  constructor(config: LlamaRefinerConfig, logger: Logger = createLogger()) {
     this.#config = config;
+    this.#logger = logger;
   }
 
   async initialize(): Promise<void> {
@@ -53,6 +56,51 @@ export class LlamaCppRefiner implements TextRefiner {
 
   async generate(text: string, options: GenerationOptions): Promise<GenerationResult> {
     const model = await this.#getModel();
+    const startedAt = performance.now();
+    this.#logger.debug(
+      {
+        inputCharacters: text.length,
+        contextSize: this.#config.contextSize,
+        maxOutputTokens: this.#config.maxOutputTokens,
+      },
+      "inference.started",
+    );
+
+    try {
+      const result = await this.#runInference(model, text, options);
+      this.#logger.info(
+        {
+          durationMs: Math.round(performance.now() - startedAt),
+          promptTokens: result.promptTokens,
+          outputTokens: result.outputTokens,
+        },
+        "inference.completed",
+      );
+      return result;
+    } catch (error) {
+      const logContext = {
+        durationMs: Math.round(performance.now() - startedAt),
+        err: error,
+      };
+      if (options.signal.aborted) {
+        this.#logger.warn(logContext, "inference.aborted");
+      } else {
+        this.#logger.error(logContext, "inference.failed");
+      }
+      throw error;
+    }
+  }
+
+  #getModel(): Promise<LlamaModel> {
+    this.#modelPromise ??= this.#loadModel();
+    return this.#modelPromise;
+  }
+
+  async #runInference(
+    model: LlamaModel,
+    text: string,
+    options: GenerationOptions,
+  ): Promise<GenerationResult> {
     const context = await model.createContext({ contextSize: this.#config.contextSize });
     const sequence = context.getSequence();
     const session = new LlamaChatSession({
@@ -68,7 +116,6 @@ export class LlamaCppRefiner implements TextRefiner {
         temperature: 0.2,
         topP: 0.9,
       });
-
       return {
         text: response,
         promptTokens: sequence.tokenMeter.usedInputTokens,
@@ -80,16 +127,33 @@ export class LlamaCppRefiner implements TextRefiner {
     }
   }
 
-  #getModel(): Promise<LlamaModel> {
-    this.#modelPromise ??= this.#loadModel();
-    return this.#modelPromise;
-  }
-
   async #loadModel(): Promise<LlamaModel> {
-    const [llama, modelPath] = await Promise.all([
-      getLlama(),
-      resolveModelFile(this.#config.model),
-    ]);
-    return llama.loadModel({ modelPath });
+    const startedAt = performance.now();
+    this.#logger.info({ model: this.#config.model }, "model.load.started");
+    try {
+      const [llama, modelPath] = await Promise.all([
+        getLlama(),
+        resolveModelFile(this.#config.model),
+      ]);
+      const model = await llama.loadModel({ modelPath });
+      this.#logger.info(
+        {
+          model: this.#config.model,
+          durationMs: Math.round(performance.now() - startedAt),
+        },
+        "model.load.completed",
+      );
+      return model;
+    } catch (error) {
+      this.#logger.error(
+        {
+          model: this.#config.model,
+          durationMs: Math.round(performance.now() - startedAt),
+          err: error,
+        },
+        "model.load.failed",
+      );
+      throw error;
+    }
   }
 }
