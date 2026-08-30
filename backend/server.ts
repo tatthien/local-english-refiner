@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { serve, type ServerType } from "@hono/node-server";
 import { Hono, type Context } from "hono";
@@ -437,5 +438,17 @@ export async function startServer(
   );
 }
 
-const entryPoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
-if (import.meta.url === entryPoint) await startServer();
+function isEntryPoint(): boolean {
+  if (process.env.NODE_APP_INSTANCE !== undefined) return true;
+
+  const entryPoint = process.argv[1];
+  if (!entryPoint) return false;
+
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entryPoint);
+  } catch {
+    return import.meta.url === pathToFileURL(entryPoint).href;
+  }
+}
+
+if (isEntryPoint()) await startServer();

@@ -78,14 +78,20 @@ start exactly one backend process:
 npm install --global pm2
 npm run build
 
+NODE_BIN="$(realpath "$(command -v node)")"
 MODEL='hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M' \
 pm2 start dist/backend/server.js \
   --name local-english-refiner \
-  --instances 1
+  --execute-command \
+  --interpreter "$NODE_BIN"
 ```
 
-Do not use PM2 cluster mode or `--instances max`. Every process would load its
-own copy of the model and consume additional memory.
+`--execute-command` forces PM2 fork mode, while `--interpreter` ensures PM2 uses
+the active Node.js version when multiple version managers are installed.
+`realpath` resolves version-manager shell links to a stable executable for PM2
+startup. Confirm that `pm2 describe local-english-refiner` reports `fork_mode`
+and Node.js 22 or newer. Do not use PM2 cluster mode or `--instances`; every
+process would load its own copy of the model and consume additional memory.
 
 Useful management commands:
 
