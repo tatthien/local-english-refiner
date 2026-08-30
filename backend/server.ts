@@ -62,7 +62,7 @@ type AppContext = Context<AppEnvironment>;
 const DEFAULTS: Readonly<AppConfig> = Object.freeze({
   host: "127.0.0.1",
   port: 3030,
-  model: "hf:bartowski/google_gemma-3-12b-it-GGUF:Q4_K_M",
+  model: "hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M",
   timeoutMs: 120_000,
   contextSize: 8_192,
   maxOutputTokens: 1_024,

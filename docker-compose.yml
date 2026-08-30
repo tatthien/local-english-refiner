@@ -11,7 +11,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3030
-      MODEL: ${MODEL:-hf:bartowski/google_gemma-3-12b-it-GGUF:Q4_K_M}
+      MODEL: ${MODEL:-hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M}
       CONTEXT_SIZE: ${CONTEXT_SIZE:-8192}
       MAX_OUTPUT_TOKENS: ${MAX_OUTPUT_TOKENS:-1024}
       INFERENCE_TIMEOUT_MS: ${INFERENCE_TIMEOUT_MS:-120000}

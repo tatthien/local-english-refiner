@@ -59,7 +59,7 @@ Supported environment variables:
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `MODEL` | `hf:bartowski/google_gemma-3-12b-it-GGUF:Q4_K_M` | GGUF path, URL, or model URI |
+| `MODEL` | `hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M` | GGUF path, URL, or model URI |
 | `CONTEXT_SIZE` | `8192` | Context window in tokens |
 | `MAX_OUTPUT_TOKENS` | `1024` | Maximum generated tokens per revision |
 | `INFERENCE_TIMEOUT_MS` | `120000` | Generation timeout after model loading |
@@ -244,7 +244,7 @@ Response:
 ```json
 {
   "refined": "Revised text",
-  "model": "hf:bartowski/google_gemma-3-12b-it-GGUF:Q4_K_M",
+  "model": "hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M",
   "metrics": {
     "totalDurationMs": 2500,
     "promptTokens": 40,
@@ -264,8 +264,8 @@ Accepts the same request as `/api/refine` and returns newline-delimited JSON.
 The extension uses this endpoint so text appears chunk by chunk:
 
 ```jsonl
-{"type":"start","model":"hf:bartowski/google_gemma-3-12b-it-GGUF:Q4_K_M"}
+{"type":"start","model":"hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M"}
 {"type":"delta","delta":"Revised"}
 {"type":"delta","delta":" text"}
-{"type":"done","refined":"Revised text","model":"hf:bartowski/google_gemma-3-12b-it-GGUF:Q4_K_M","metrics":{}}
+{"type":"done","refined":"Revised text","model":"hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M","metrics":{}}
 ```
