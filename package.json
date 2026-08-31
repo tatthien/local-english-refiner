@@ -7,7 +7,7 @@
     "start": "tsx backend/server.ts",
     "dev": "tsx watch backend/server.ts",
     "build": "tsx scripts/build.ts",
-    "test": "tsx --test backend/*.test.ts",
+    "test": "tsx --test backend/*.test.ts extension/*.test.ts",
     "check": "tsc --noEmit"
   },
   "engines": {
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
+    "diff": "^9.0.0",
     "hono": "^4.13.5",
     "node-llama-cpp": "^3.20.0",
     "pino": "^10.3.1",

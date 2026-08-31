@@ -1,3 +1,5 @@
+import { compareText } from "./text-diff.ts";
+
 (() => {
   if (window.__localEnglishRefinerLoaded) return;
   window.__localEnglishRefinerLoaded = true;
@@ -85,7 +87,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 13px 14px 10px;
+      padding: 8px 12px;
       border-bottom: 1px solid #f1f5f9;
     }
     .panel-title { display: flex; align-items: center; gap: 8px; font-weight: 650; }
@@ -93,8 +95,8 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 22px;
-      height: 22px;
+      width: 20px;
+      height: 20px;
       border-radius: 999px;
       background: #059669;
       color: white;
@@ -105,8 +107,8 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 28px;
-      height: 28px;
+      width: 24px;
+      height: 24px;
       border: 0;
       border-radius: 8px;
       background: transparent;
@@ -115,12 +117,65 @@
     }
     .close-button:hover { background: #f1f5f9; color: #0f172a; }
     .panel-body { padding: 12px 14px; overflow: auto; max-height: 326px; }
+    .result-tabs {
+      display: flex;
+      gap: 4px;
+      margin: -2px 0 12px;
+      padding: 3px;
+      border-radius: 10px;
+      background: #f1f5f9;
+    }
+    .result-tab {
+      flex: 1;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .result-tab:hover { color: #0f172a; }
+    .result-tab.active {
+      background: #ffffff;
+      color: #0f172a;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+    }
+    .result-tab:focus-visible { outline: 2px solid #10b981; outline-offset: 1px; }
     .result {
       margin: 0;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
+    .diff-added {
+      border-radius: 3px;
+      background: #dcfce7;
+      color: #166534;
+      text-decoration: none;
+    }
+    .diff-removed {
+      border-radius: 3px;
+      background: #fee2e2;
+      color: #991b1b;
+      text-decoration: line-through;
+      text-decoration-thickness: 1.5px;
+    }
+    .comparison-details {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 12px;
+      margin-top: 10px;
+      color: #64748b;
+      font-size: 12px;
+    }
+    .comparison-details[hidden] { display: none; }
+    .comparison-legend { display: inline-flex; align-items: center; gap: 5px; }
+    .legend-swatch { width: 9px; height: 9px; border-radius: 2px; }
+    .legend-swatch.added { background: #86efac; }
+    .legend-swatch.removed { background: #fca5a5; }
     .status { display: flex; align-items: center; gap: 9px; color: #475569; }
     .status-dot {
       width: 14px;
@@ -160,6 +215,13 @@
       .close-button { color: #94a3b8; }
       .close-button:hover, .action-button:hover { background: #1e293b; color: #f8fafc; }
       .status { color: #cbd5e1; }
+      .result-tabs { background: #1e293b; }
+      .result-tab { color: #94a3b8; }
+      .result-tab:hover { color: #f8fafc; }
+      .result-tab.active { background: #334155; color: #f8fafc; box-shadow: none; }
+      .diff-added { background: rgba(22, 101, 52, 0.55); color: #dcfce7; }
+      .diff-removed { background: rgba(153, 27, 27, 0.55); color: #fee2e2; }
+      .comparison-details { color: #94a3b8; }
       .action-button { border-color: #475569; background: #0f172a; color: #e2e8f0; }
       .action-button.primary { border-color: #10b981; background: #059669; color: white; }
     }
@@ -610,10 +672,90 @@
   function showResult(result: RefinementResult): void {
     streamingResultElement = null;
     panelBody.innerHTML = "";
+    const original = sourceSnapshot?.text ?? "";
+    const comparison = compareText(original, result.refined);
+    const views = ["refined", "changes", "original"] as const;
+    type ResultView = typeof views[number];
+
+    const tabs = document.createElement("div");
+    tabs.className = "result-tabs";
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "Refinement views");
+
     const text = document.createElement("p");
+    text.id = "local-english-refiner-result-view";
     text.className = "result";
-    text.textContent = result.refined;
-    panelBody.append(text);
+    text.setAttribute("role", "tabpanel");
+
+    const details = document.createElement("div");
+    details.className = "comparison-details";
+
+    const tabButtons = new Map<ResultView, HTMLButtonElement>();
+    const renderView = (view: ResultView): void => {
+      for (const [buttonView, tab] of tabButtons) {
+        const active = buttonView === view;
+        tab.classList.toggle("active", active);
+        tab.setAttribute("aria-selected", String(active));
+        tab.tabIndex = active ? 0 : -1;
+      }
+      text.setAttribute("aria-labelledby", tabButtons.get(view)?.id ?? "");
+
+      text.replaceChildren();
+      details.replaceChildren();
+      if (view === "changes") {
+        for (const part of comparison.parts) {
+          const span = document.createElement("span");
+          if (part.kind !== "unchanged") span.className = `diff-${part.kind}`;
+          span.textContent = part.value;
+          text.append(span);
+        }
+
+        const count = document.createElement("span");
+        count.textContent = comparison.changeCount === 0
+          ? "No text changes"
+          : `${comparison.changeCount} changed ${comparison.changeCount === 1 ? "section" : "sections"}`;
+        details.append(count);
+        if (comparison.changeCount > 0) {
+          for (const [kind, label] of [["removed", "Removed"], ["added", "Added"]] as const) {
+            const legend = document.createElement("span");
+            legend.className = "comparison-legend";
+            const swatch = document.createElement("span");
+            swatch.className = `legend-swatch ${kind}`;
+            legend.append(swatch, label);
+            details.append(legend);
+          }
+        }
+      } else {
+        text.textContent = view === "refined" ? result.refined : original;
+      }
+      details.hidden = view !== "changes";
+      schedulePanelPosition();
+    };
+
+    for (const view of views) {
+      const tab = document.createElement("button");
+      tab.className = "result-tab";
+      tab.id = `local-english-refiner-${view}-tab`;
+      tab.type = "button";
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", text.id);
+      tab.textContent = view[0]!.toUpperCase() + view.slice(1);
+      tab.addEventListener("click", () => renderView(view));
+      tab.addEventListener("keydown", (event) => {
+        const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+        if (direction === 0) return;
+        event.preventDefault();
+        const nextIndex = (views.indexOf(view) + direction + views.length) % views.length;
+        const nextView = views[nextIndex]!;
+        renderView(nextView);
+        tabButtons.get(nextView)?.focus();
+      });
+      tabButtons.set(view, tab);
+      tabs.append(tab);
+    }
+
+    panelBody.append(tabs, text, details);
+    renderView("refined");
 
     const tokensPerSecond = result.metrics?.outputTokensPerSecond;
     const totalDurationMs = result.metrics?.totalDurationMs;

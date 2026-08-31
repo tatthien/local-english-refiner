@@ -200,7 +200,8 @@ The extension cannot run on protected Chrome pages such as
 
 1. Select the text you want to refine.
 2. Click the green sparkle button beside the selection.
-3. Review the revision as it streams from the local model.
+3. Review highlighted additions and removals in **Changes**, or switch between
+   the **Refined** and **Original** views.
 4. Click **Apply** to replace exactly the selected text or **Copy** to copy it.
 
 The preview includes the model's generation rate and total response time.
