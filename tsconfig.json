@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["backend/**/*.ts", "extension/**/*.ts", "scripts/**/*.ts"]
+  "include": ["backend/**/*.ts", "extension/**/*.ts", "native-host/**/*.ts", "scripts/**/*.ts"]
 }

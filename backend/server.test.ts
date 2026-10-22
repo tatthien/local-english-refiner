@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import type {
@@ -10,6 +14,7 @@ import { createLogger } from "./logger.ts";
 import {
   configFromEnvironment,
   createApp,
+  stopWhenIdle,
   type AppConfig,
 } from "./server.ts";
 
@@ -55,6 +60,7 @@ test("configuration uses local model settings", () => {
   assert.equal(config.maxOutputTokens, 512);
   assert.equal(config.timeoutMs, 30_000);
   assert.equal(config.logLevel, "debug");
+  assert.equal(config.idleTimeoutMs, 0);
 });
 
 test("health endpoint reports the configured model", async () => {
@@ -180,4 +186,29 @@ test("requests emit correlated logs without recording input text", async () => {
   assert.equal(requestLog?.path, "/api/refine");
   assert.equal(requestLog?.status, 200);
   assert.equal(JSON.stringify(records).includes(secretText), false);
+});
+
+test("idle timer waits for open responses to close", async (context) => {
+  let pending: ServerResponse | undefined;
+  const server = createServer((_request, response) => {
+    pending = response;
+    response.write("partial");
+  });
+  context.after(() => server.close());
+  let idleCalls = 0;
+  stopWhenIdle(server, 200, () => {
+    idleCalls += 1;
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const response = await fetch(`http://127.0.0.1:${port}/`);
+  await delay(300);
+  assert.equal(idleCalls, 0);
+
+  pending?.end();
+  await response.text();
+  await delay(300);
+  assert.equal(idleCalls, 1);
 });

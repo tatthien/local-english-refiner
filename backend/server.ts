@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
+import type { Server } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { serve, type ServerType } from "@hono/node-server";
@@ -30,6 +31,7 @@ export interface AppConfig {
   contextSize: number;
   maxOutputTokens: number;
   maxInputCharacters: number;
+  idleTimeoutMs: number;
   logLevel: LogLevel;
 }
 
@@ -67,6 +69,7 @@ const DEFAULTS: Readonly<AppConfig> = Object.freeze({
   contextSize: 8_192,
   maxOutputTokens: 1_024,
   maxInputCharacters: 20_000,
+  idleTimeoutMs: 0,
   logLevel: "info",
 });
 
@@ -95,6 +98,10 @@ export function configFromEnvironment(
     maxInputCharacters: numberFromEnvironment(
       environment.MAX_INPUT_CHARACTERS,
       DEFAULTS.maxInputCharacters,
+    ),
+    idleTimeoutMs: numberFromEnvironment(
+      environment.IDLE_TIMEOUT_MS,
+      DEFAULTS.idleTimeoutMs,
     ),
     logLevel: parseLogLevel(environment.LOG_LEVEL),
   };
@@ -411,6 +418,31 @@ export function createApp(
   return app;
 }
 
+/** Counts open responses, not requests, because a stream outlives the handler that returns it. */
+export function stopWhenIdle(
+  server: Server,
+  idleTimeoutMs: number,
+  onIdle: () => void,
+): void {
+  let openResponses = 0;
+  let timer: NodeJS.Timeout | undefined;
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(onIdle, idleTimeoutMs);
+  };
+
+  server.on("request", (_request, response) => {
+    openResponses += 1;
+    clearTimeout(timer);
+    response.on("close", () => {
+      openResponses -= 1;
+      if (openResponses === 0) schedule();
+    });
+  });
+  server.on("close", () => clearTimeout(timer));
+  schedule();
+}
+
 export async function startServer(
   config: AppConfig = configFromEnvironment(),
 ): Promise<ServerType> {
@@ -418,7 +450,7 @@ export async function startServer(
   const refiner = new LlamaCppRefiner(config, logger);
   await refiner.initialize();
   const app = createApp(config, refiner, logger);
-  return serve(
+  const server = serve(
     {
       fetch: app.fetch,
       hostname: config.host,
@@ -436,6 +468,14 @@ export async function startServer(
       );
     },
   );
+
+  if (config.idleTimeoutMs > 0) {
+    stopWhenIdle(server as Server, config.idleTimeoutMs, () => {
+      logger.info({ idleTimeoutMs: config.idleTimeoutMs }, "backend.idle.stopped");
+      server.close(() => process.exit(0));
+    });
+  }
+  return server;
 }
 
 function isEntryPoint(): boolean {

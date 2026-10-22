@@ -10,6 +10,7 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY backend ./backend
 COPY extension ./extension
+COPY native-host ./native-host
 COPY scripts ./scripts
 
 RUN npm run build

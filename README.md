@@ -13,6 +13,7 @@ streams each revision into a preview before changing the page.
 
 - `backend/` - Hono TypeScript API, `node-llama-cpp` inference, and tests
 - `extension/` - TypeScript source for the Manifest V3 Chrome extension
+- `native-host/` - Chrome native messaging host that starts the backend on demand
 - `scripts/` - TypeScript build script
 - `dist/` - generated backend and unpacked extension
 
@@ -66,6 +67,7 @@ Supported environment variables:
 | `PORT` | `3030` | Backend port |
 | `HOST` | `127.0.0.1` | Backend listening address |
 | `MAX_INPUT_CHARACTERS` | `20000` | Maximum accepted text length |
+| `IDLE_TIMEOUT_MS` | `0` | Stop after this many milliseconds with no requests (`0` disables it) |
 | `LOG_LEVEL` | `info` | Minimum JSON log level: `debug`, `info`, `warn`, or `error` |
 
 ### Run in the background with PM2
@@ -121,6 +123,45 @@ Run the setup command printed by PM2, then save the current process list:
 ```bash
 pm2 save
 ```
+
+### Start on demand from Chrome
+
+The extension can start the backend when you click the refinement button. If
+the backend does not respond, the extension calls a native messaging host. The
+host starts `dist/backend/server.js` in the background and waits until the
+model is loaded.
+
+Install the host one time:
+
+```bash
+npm run build
+npm run install-host
+```
+
+The script writes two files to
+`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` (or
+`~/.config/google-chrome/NativeMessagingHosts/` on Linux):
+
+- `local_english_refiner.json` - the host manifest for the extension ID
+- `local_english_refiner.sh` - a wrapper that runs the host with the current Node.js binary
+
+Chrome starts the host with a minimal `PATH`, so the wrapper records the
+absolute path of Node.js. If you change or remove that Node.js version, run
+`npm run install-host` again.
+
+A backend started by the host stops after 30 minutes with no requests, so the
+model does not keep its memory. The next click starts it again. Set
+`IDLE_TIMEOUT_MS` before you install the host to change this value. The host
+writes the backend logs to `~/.local-english-refiner/server.log`.
+
+To remove the host:
+
+```bash
+npm run uninstall-host
+```
+
+If PM2 or `npm start` already runs the backend, the extension uses it and the
+host does not start a second copy.
 
 ## 2. Start with Docker
 
@@ -192,6 +233,10 @@ directly is faster on Apple Silicon.
 3. Click **Load unpacked**.
 4. Select `~/code/labs/ollama-english-refiner/dist/extension`.
 5. Refresh any already-open webpages where you want to use the extension.
+
+The `key` in `extension/manifest.json` gives the extension a fixed ID. The
+native host accepts only this ID. If you loaded the extension before the `key`
+was added, remove it and load it again.
 
 The extension cannot run on protected Chrome pages such as
 `chrome://extensions` or the Chrome Web Store.
