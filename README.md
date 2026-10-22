@@ -6,8 +6,9 @@ content-editable field to display a floating refinement button. The extension
 streams each revision into a preview before changing the page.
 
 <p align="center">
-  <img width="635" height="368" alt="Screenshot 2026-08-26 at 22 09 32" src="https://github.com/user-attachments/assets/b7b56533-285c-459b-aed1-b90029088bbe" />
+  <img width="624" height="407" alt="Screenshot 2026-10-22 at 23 13 32" src="https://github.com/user-attachments/assets/ad484694-3b4a-49e0-aa2f-36f1a9e5086b" />
 </p>
+
 
 ## What is included
 
