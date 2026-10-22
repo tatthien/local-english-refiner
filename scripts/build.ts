@@ -10,6 +10,7 @@ await rm(output, { recursive: true, force: true });
 await Promise.all([
   mkdir(resolve(output, "backend"), { recursive: true }),
   mkdir(resolve(output, "extension"), { recursive: true }),
+  mkdir(resolve(output, "native-host"), { recursive: true }),
 ]);
 
 await Promise.all([
@@ -21,6 +22,15 @@ await Promise.all([
     platform: "node",
     target: "node22",
     packages: "external",
+    sourcemap: true,
+  }),
+  build({
+    entryPoints: [resolve(root, "native-host/host.ts")],
+    outfile: resolve(output, "native-host/host.js"),
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    target: "node22",
     sourcemap: true,
   }),
   build({
@@ -42,4 +52,4 @@ await copyFile(
   resolve(output, "extension/manifest.json"),
 );
 
-console.log("Built backend and Chrome extension in dist/.");
+console.log("Built backend, native host, and Chrome extension in dist/.");

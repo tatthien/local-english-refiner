@@ -1,5 +1,8 @@
-const API_URL = "http://127.0.0.1:3030/api/refine";
-const STREAM_API_URL = "http://127.0.0.1:3030/api/refine/stream";
+import { NATIVE_HOST_NAME, SERVER_URL } from "../native-host/constants.ts";
+
+const API_URL = `${SERVER_URL}/api/refine`;
+const STREAM_API_URL = `${SERVER_URL}/api/refine/stream`;
+const HEALTH_URL = `${SERVER_URL}/health`;
 const REQUEST_TIMEOUT_MS = 120_000;
 
 interface RefineRequest {
@@ -17,6 +20,7 @@ interface ApiError {
 }
 
 type StreamEvent =
+  | { type: "starting" }
   | { type: "start"; model: string }
   | { type: "delta"; delta: string }
   | { type: "done"; refined: string; model: string; metrics: Record<string, number> }
@@ -24,6 +28,65 @@ type StreamEvent =
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+async function isServerHealthy(): Promise<boolean> {
+  try {
+    const response = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(1_500) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function startServerWithNativeHost(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const port = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+    let settled = false;
+
+    port.onMessage.addListener((message: unknown) => {
+      if (settled || typeof message !== "object" || message === null || !("type" in message)) {
+        return;
+      }
+      settled = true;
+      if (message.type === "ready") {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            "error" in message && typeof message.error === "string"
+              ? message.error
+              : "The local server could not start.",
+          ),
+        );
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (settled) return;
+      settled = true;
+      const reason = chrome.runtime.lastError?.message ?? "";
+      reject(
+        new Error(
+          /not found|forbidden/i.test(reason)
+            ? "The local server is not running and the native host is not installed. Run `npm run install-host`."
+            : reason || "The native host closed before the local server started.",
+        ),
+      );
+    });
+  });
+}
+
+let pendingServerStart: Promise<void> | null = null;
+
+/** All tabs share one start, so two clicks cannot spawn two servers. */
+async function ensureServer(onStarting: () => void): Promise<void> {
+  if (!pendingServerStart && (await isServerHealthy())) return;
+  onStarting();
+  pendingServerStart ??= startServerWithNativeHost().finally(() => {
+    pendingServerStart = null;
+  });
+  await pendingServerStart;
 }
 
 chrome.runtime.onMessage.addListener(
@@ -84,7 +147,7 @@ chrome.runtime.onConnect.addListener((port) => {
   const controller = new AbortController();
   let started = false;
   let disconnected = false;
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
 
   const safePost = (message: StreamEvent): void => {
     if (disconnected) return;
@@ -116,6 +179,9 @@ chrome.runtime.onConnect.addListener((port) => {
     const request = message as StartStreamMessage;
 
     void (async () => {
+      await ensureServer(() => safePost({ type: "starting" }));
+      if (disconnected) return;
+      timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       const response = await fetch(STREAM_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

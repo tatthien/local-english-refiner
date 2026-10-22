@@ -7,7 +7,9 @@
     "start": "tsx backend/server.ts",
     "dev": "tsx watch backend/server.ts",
     "build": "tsx scripts/build.ts",
-    "test": "tsx --test backend/*.test.ts extension/*.test.ts",
+    "install-host": "tsx scripts/install-host.ts",
+    "uninstall-host": "tsx scripts/install-host.ts --uninstall",
+    "test": "tsx --test backend/*.test.ts extension/*.test.ts native-host/*.test.ts",
     "check": "tsc --noEmit"
   },
   "engines": {

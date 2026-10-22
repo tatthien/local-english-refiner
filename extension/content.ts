@@ -629,10 +629,11 @@ import { compareText } from "./text-diff.ts";
     dispatchEditEvents(snapshot.editable, revisedText);
   }
 
-  function showLoading() {
+  function showLoading(message = "Refining locally…") {
     button.classList.add("loading");
     streamingResultElement = null;
-    panelBody.innerHTML = `<div class="status"><span class="status-dot"></span><span>Refining locally…</span></div>`;
+    panelBody.innerHTML = `<div class="status"><span class="status-dot"></span><span></span></div>`;
+    panelBody.querySelector(".status span:last-child")!.textContent = message;
     panelActions.classList.remove("visible");
     panel.classList.add("visible");
     hideButton();
@@ -780,6 +781,7 @@ import { compareText } from "./text-diff.ts";
   function requestRefinement(
     text: string,
     onDelta: (accumulatedText: string) => void,
+    onStarting: () => void,
   ): Promise<RefinementResult> {
     return new Promise<RefinementResult>((resolve, reject) => {
       const port = chrome.runtime.connect({ name: "refine-english-stream" });
@@ -800,6 +802,14 @@ import { compareText } from "./text-diff.ts";
       port.onMessage.addListener((event: unknown) => {
         if (settled) return;
         if (typeof event !== "object" || event === null || !("type" in event)) return;
+        if (event.type === "starting") {
+          onStarting();
+          return;
+        }
+        if (event.type === "start") {
+          showLoading();
+          return;
+        }
         if (event.type === "delta") {
           accumulated += "delta" in event && typeof event.delta === "string" ? event.delta : "";
           onDelta(accumulated);
@@ -860,7 +870,9 @@ import { compareText } from "./text-diff.ts";
     showLoading();
 
     try {
-      const result = await requestRefinement(snapshot.text, showStreaming);
+      const result = await requestRefinement(snapshot.text, showStreaming, () =>
+        showLoading("Starting the local server…"),
+      );
       if (requestId === activeRequest) showResult(result);
     } catch (error: unknown) {
       if (requestId === activeRequest) {
