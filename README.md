@@ -245,7 +245,7 @@ The extension cannot run on protected Chrome pages such as
 ## Using it
 
 1. Select the text you want to refine.
-2. Click the green sparkle button beside the selection.
+2. Click the orange face button beside the selection. Its eyes follow the pointer, and they roll while the text is refined.
 3. Review highlighted additions and removals in **Changes**, or switch between
    the **Refined** and **Original** views.
 4. Click **Apply** to replace exactly the selected text or **Copy** to copy it.

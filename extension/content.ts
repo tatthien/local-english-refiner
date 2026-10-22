@@ -9,6 +9,22 @@ import { compareText } from "./text-diff.ts";
   const ICON_SIZE = 30;
   const EDGE_GAP = 6;
   const PANEL_GAP = 12;
+  const FACE_COLOR = "#EE6A2B";
+  const FACE_EYES = [
+    { cx: 11.3, cy: 13.8 },
+    { cx: 18.7, cy: 14.2 },
+  ];
+  const SCLERA = { width: 5, height: 7.8, corner: 2.2 };
+  const PUPIL_RADIUS = 1.5;
+  // Pupils rest at the right, a little low, as in the reference art; motion is relative to that.
+  const PUPIL_REST = { x: 1.1, y: 0.6 };
+  // The pupil center may go anywhere within PUPIL_CORNER of this inner box, which keeps the pupil inside the sclera.
+  const PUPIL_CORNER = SCLERA.corner - PUPIL_RADIUS - 0.1;
+  const PUPIL_BOX = {
+    x: SCLERA.width / 2 - PUPIL_RADIUS - 0.1 - PUPIL_CORNER,
+    y: SCLERA.height / 2 - PUPIL_RADIUS - 0.1 - PUPIL_CORNER,
+  };
+  const TRACKING_DISTANCE = 240;
 
   type ControlSnapshot = {
     element: HTMLInputElement | HTMLTextAreaElement;
@@ -36,7 +52,8 @@ import { compareText } from "./text-diff.ts";
 
   const host = document.createElement("div");
   host.id = "local-english-refiner-root";
-  host.style.cssText = "all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;";
+  host.style.cssText =
+    "all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;";
   const shadow = host.attachShadow({ mode: "open" });
 
   const style = document.createElement("style");
@@ -52,21 +69,51 @@ import { compareText } from "./text-diff.ts";
       width: ${ICON_SIZE}px;
       height: ${ICON_SIZE}px;
       padding: 0;
-      border: 1px solid rgba(5, 150, 105, 0.35);
+      border: 0;
       border-radius: 999px;
-      background: #059669;
-      color: white;
-      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.2);
+      background: transparent;
       cursor: pointer;
       pointer-events: auto;
-      transition: transform 120ms ease, background 120ms ease, opacity 120ms ease;
+      transition: transform 120ms ease;
     }
-    .refiner-button:hover { background: #047857; transform: scale(1.06); }
-    .refiner-button:focus-visible { outline: 3px solid rgba(16, 185, 129, 0.35); outline-offset: 2px; }
-    .refiner-button.loading { cursor: wait; opacity: 0.82; }
-    .refiner-button.loading svg { animation: refiner-spin 900ms linear infinite; }
-    .refiner-button svg { width: 17px; height: 17px; }
+    .refiner-button:hover { transform: scale(1.08); }
+    .refiner-button:focus-visible { outline: 3px solid rgba(238, 106, 43, 0.4); outline-offset: 2px; }
+    .refiner-button.loading { cursor: wait; }
+    .refiner-button svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      filter: drop-shadow(0 3px 6px rgba(15, 23, 42, 0.28));
+    }
+    .face-eye {
+      animation: face-blink 4.4s infinite;
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    .face-pupil { animation: face-look 6s ease-in-out infinite; }
+    .refiner-button.tracking .face-pupil { animation: none; transition: transform 80ms linear; }
+    .loading .face-eye { animation: none; }
+    .loading .face-pupil { animation: face-roll 900ms linear infinite; }
+    @keyframes face-blink {
+      0%, 91%, 97%, 100% { transform: scaleY(1); }
+      94% { transform: scaleY(0.08); }
+    }
+    @keyframes face-look {
+      0%, 16%, 88%, 100% { transform: ${pupilAt(PUPIL_REST.x, PUPIL_REST.y)}; }
+      22%, 38% { transform: ${pupilToward(-1, 0.2, 0.9)}; }
+      44%, 60% { transform: ${pupilToward(0.2, -1, 0.85)}; }
+      66%, 82% { transform: ${pupilToward(-0.4, 1, 0.9)}; }
+    }
+    @keyframes face-roll {
+      0%, 100% { transform: ${pupilToward(1, 0, 0.8)}; }
+      25% { transform: ${pupilToward(0, 1, 0.8)}; }
+      50% { transform: ${pupilToward(-1, 0, 0.8)}; }
+      75% { transform: ${pupilToward(0, -1, 0.8)}; }
+    }
     @keyframes refiner-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .face-eye, .face-pupil, .loading .face-pupil { animation: none; }
+    }
 
     .panel {
       position: fixed;
@@ -87,22 +134,10 @@ import { compareText } from "./text-diff.ts";
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 12px;
-      border-bottom: 1px solid #f1f5f9;
+      padding: 8px 12px 0;
     }
-    .panel-title { display: flex; align-items: center; gap: 8px; font-weight: 650; }
-    .panel-mark {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 20px;
-      height: 20px;
-      border-radius: 999px;
-      background: #059669;
-      color: white;
-      font-size: 12px;
-      font-weight: 750;
-    }
+    .panel-mark { display: inline-flex; width: 28px; height: 28px; }
+    .panel-mark svg { width: 100%; height: 100%; overflow: visible; }
     .close-button {
       display: inline-flex;
       align-items: center;
@@ -127,7 +162,7 @@ import { compareText } from "./text-diff.ts";
     }
     .result-tab {
       flex: 1;
-      padding: 6px 8px;
+      padding: 4px 8px;
       border: 0;
       border-radius: 7px;
       background: transparent;
@@ -182,7 +217,7 @@ import { compareText } from "./text-diff.ts";
       height: 14px;
       flex: 0 0 auto;
       border: 2px solid #cbd5e1;
-      border-top-color: #059669;
+      border-top-color: #111111;
       border-radius: 999px;
       animation: refiner-spin 750ms linear infinite;
     }
@@ -207,11 +242,11 @@ import { compareText } from "./text-diff.ts";
       cursor: pointer;
     }
     .action-button:hover { background: #f8fafc; }
-    .action-button.primary { border-color: #059669; background: #059669; color: white; }
-    .action-button.primary:hover { background: #047857; }
+    .action-button.primary { border-color: #111111; background: #111111; color: white; }
+    .action-button.primary:hover { background: #111111; }
     @media (prefers-color-scheme: dark) {
       .panel { border-color: #334155; background: #0f172a; color: #f8fafc; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); }
-      .panel-header, .panel-actions { border-color: #1e293b; }
+      .panel-actions { border-color: #1e293b; }
       .close-button { color: #94a3b8; }
       .close-button:hover, .action-button:hover { background: #1e293b; color: #f8fafc; }
       .status { color: #cbd5e1; }
@@ -232,11 +267,24 @@ import { compareText } from "./text-diff.ts";
   button.type = "button";
   button.title = "Refine English";
   button.setAttribute("aria-label", "Refine English");
-  button.innerHTML = `
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M12 2.75 13.6 8.4 19.25 10l-5.65 1.6L12 17.25l-1.6-5.65L4.75 10l5.65-1.6L12 2.75Z" fill="currentColor"/>
-      <path d="m18.5 15 .65 2.35L21.5 18l-2.35.65L18.5 21l-.65-2.35L15.5 18l2.35-.65L18.5 15Z" fill="currentColor" opacity=".8"/>
+  const faceSvg = `
+    <svg viewBox="0 0 32 32" aria-hidden="true">
+      <path d="${wavyCirclePath(8, 14.4, 0.9)}" fill="${FACE_COLOR}"/>
+      ${FACE_EYES.map(
+        ({ cx, cy }) => `
+        <g class="face-eye">
+          <rect
+            x="${cx - SCLERA.width / 2}" y="${cy - SCLERA.height / 2}"
+            width="${SCLERA.width}" height="${SCLERA.height}" rx="${SCLERA.corner}"
+            fill="#fff"/>
+          <g class="face-pupil" data-cx="${cx}" data-cy="${cy}">
+            <circle cx="${cx + PUPIL_REST.x}" cy="${cy + PUPIL_REST.y}" r="${PUPIL_RADIUS}" fill="#111"/>
+          </g>
+        </g>`,
+      ).join("")}
     </svg>`;
+  button.innerHTML = faceSvg;
+  const pupils = [...button.querySelectorAll<SVGGElement>(".face-pupil")];
 
   const panel = document.createElement("section");
   panel.className = "panel";
@@ -244,7 +292,7 @@ import { compareText } from "./text-diff.ts";
   panel.setAttribute("aria-label", "English refinement result");
   panel.innerHTML = `
     <header class="panel-header">
-      <div class="panel-title"><span class="panel-mark">✦</span><span>Local English Refiner</span></div>
+      <span class="panel-mark">${faceSvg}</span>
       <button class="close-button" type="button" aria-label="Close">✕</button>
     </header>
     <div class="panel-body"><div class="status"><span class="status-dot"></span><span>Refining locally…</span></div></div>
@@ -258,9 +306,76 @@ import { compareText } from "./text-diff.ts";
 
   const panelBody = panel.querySelector<HTMLDivElement>(".panel-body")!;
   const panelActions = panel.querySelector<HTMLElement>(".panel-actions")!;
+  const panelMark = panel.querySelector<HTMLElement>(".panel-mark")!;
   const closeButton = panel.querySelector<HTMLButtonElement>(".close-button")!;
   const copyButton = panel.querySelector<HTMLButtonElement>(".copy-button")!;
   const applyButton = panel.querySelector<HTMLButtonElement>(".apply-button")!;
+
+  /** Pupils are drawn at rest, so a target offset from the eye center becomes a translate from rest. */
+  function pupilAt(x: number, y: number): string {
+    return `translate(${(x - PUPIL_REST.x).toFixed(2)}px, ${(y - PUPIL_REST.y).toFixed(2)}px)`;
+  }
+
+  function pupilFits(x: number, y: number): boolean {
+    return (
+      Math.hypot(
+        Math.max(Math.abs(x) - PUPIL_BOX.x, 0),
+        Math.max(Math.abs(y) - PUPIL_BOX.y, 0),
+      ) <= PUPIL_CORNER
+    );
+  }
+
+  /** Moves the pupil along a direction, `reach` of the way to the edge of the sclera. */
+  function pupilToward(dx: number, dy: number, reach = 1): string {
+    const length = Math.hypot(dx, dy) || 1;
+    const [ux, uy] = [dx / length, dy / length];
+    let inside = 0;
+    let outside = Math.hypot(PUPIL_BOX.x, PUPIL_BOX.y) + PUPIL_CORNER + 0.01;
+    for (let step = 0; step < 12; step += 1) {
+      const middle = (inside + outside) / 2;
+      if (pupilFits(ux * middle, uy * middle)) inside = middle;
+      else outside = middle;
+    }
+    return pupilAt(ux * inside * reach, uy * inside * reach);
+  }
+
+  function wavyCirclePath(
+    lobes: number,
+    radius: number,
+    depth: number,
+  ): string {
+    const steps = lobes * 12;
+    const points = Array.from({ length: steps }, (_, index) => {
+      const angle = (index / steps) * 2 * Math.PI;
+      const distance = radius + depth * Math.cos(lobes * angle);
+      return `${(16 + distance * Math.cos(angle)).toFixed(2)} ${(16 + distance * Math.sin(angle)).toFixed(2)}`;
+    });
+    return `M${points.join("L")}Z`;
+  }
+
+  function lookAt(x: number, y: number): void {
+    const rect = button.getBoundingClientRect();
+    const center = {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+    const tracking =
+      button.style.display !== "none" &&
+      !button.classList.contains("loading") &&
+      Math.hypot(x - center.x, y - center.y) < TRACKING_DISTANCE;
+    button.classList.toggle("tracking", tracking);
+
+    const scale = rect.width / 32;
+    for (const pupil of pupils) {
+      if (!tracking) {
+        pupil.style.transform = "";
+        continue;
+      }
+      const dx = x - (rect.left + Number(pupil.dataset.cx) * scale);
+      const dy = y - (rect.top + Number(pupil.dataset.cy) * scale);
+      pupil.style.transform = pupilToward(dx, dy);
+    }
+  }
 
   // Keep the page selection intact while interacting with our overlay.
   shadow.addEventListener("mousedown", (event) => event.preventDefault());
@@ -271,7 +386,9 @@ import { compareText } from "./text-diff.ts";
       return element.disabled || element.readOnly ? null : element;
     }
     if (element instanceof HTMLInputElement) {
-      return !element.disabled && !element.readOnly && TEXT_INPUT_TYPES.has(element.type)
+      return !element.disabled &&
+        !element.readOnly &&
+        TEXT_INPUT_TYPES.has(element.type)
         ? element
         : null;
     }
@@ -314,7 +431,8 @@ import { compareText } from "./text-diff.ts";
       "wordSpacing",
     ] as const;
 
-    for (const property of properties) target.style[property] = computed[property];
+    for (const property of properties)
+      target.style[property] = computed[property];
   }
 
   function controlOffsetRect(
@@ -344,14 +462,19 @@ import { compareText } from "./text-diff.ts";
 
     const markerRect = marker.getBoundingClientRect();
     mirror.remove();
-    const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight) || markerRect.height;
+    const lineHeight =
+      Number.parseFloat(getComputedStyle(element).lineHeight) ||
+      markerRect.height;
     const left = Math.max(
       elementRect.left,
       Math.min(elementRect.right, markerRect.left - element.scrollLeft),
     );
     const top = Math.max(
       elementRect.top,
-      Math.min(elementRect.bottom - lineHeight, markerRect.top - element.scrollTop),
+      Math.min(
+        elementRect.bottom - lineHeight,
+        markerRect.top - element.scrollTop,
+      ),
     );
     return new DOMRect(left, top, 1, lineHeight);
   }
@@ -373,7 +496,12 @@ import { compareText } from "./text-diff.ts";
       : elementRect.right;
     const top = Math.min(startRect.top, endRect.top);
     const bottom = Math.max(startRect.bottom, endRect.bottom);
-    return new DOMRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+    return new DOMRect(
+      left,
+      top,
+      Math.max(1, right - left),
+      Math.max(1, bottom - top),
+    );
   }
 
   function currentSelection(): SelectionCandidate | null {
@@ -398,13 +526,15 @@ import { compareText } from "./text-diff.ts";
     }
 
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0)
+      return null;
     const anchorEditable = closestEditable(selection.anchorNode);
     const focusEditable = closestEditable(selection.focusNode);
     if (!anchorEditable || anchorEditable !== focusEditable) return null;
     const range = selection.getRangeAt(0);
     const text = range.toString();
-    if (!text.trim() || host.contains(range.commonAncestorContainer)) return null;
+    if (!text.trim() || host.contains(range.commonAncestorContainer))
+      return null;
     const rects = range.getClientRects();
     const rect = rects.item(rects.length - 1) || range.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) return null;
@@ -426,11 +556,21 @@ import { compareText } from "./text-diff.ts";
         ? controlSelectionRect(snapshot.element, snapshot.start, snapshot.end)
         : null;
     }
-    if (!snapshot.range.startContainer.isConnected || !snapshot.range.endContainer.isConnected) {
+    if (
+      !snapshot.range.startContainer.isConnected ||
+      !snapshot.range.endContainer.isConnected
+    ) {
       return null;
     }
     const rects = snapshot.range.getClientRects();
-    return rects.item(rects.length - 1) || snapshot.range.getBoundingClientRect();
+    return (
+      rects.item(rects.length - 1) || snapshot.range.getBoundingClientRect()
+    );
+  }
+
+  function setLoading(loading: boolean): void {
+    button.classList.toggle("loading", loading);
+    panelMark.classList.toggle("loading", loading);
   }
 
   function hideButton() {
@@ -449,7 +589,7 @@ import { compareText } from "./text-diff.ts";
       activeRequest += 1;
       cancel();
     }
-    button.classList.remove("loading");
+    setLoading(false);
     hidePanel();
     sourceSnapshot = null;
     refreshSelection();
@@ -462,7 +602,12 @@ import { compareText } from "./text-diff.ts";
     }
 
     const rect = activeSelection.rect;
-    if (rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth) {
+    if (
+      rect.bottom < 0 ||
+      rect.top > innerHeight ||
+      rect.right < 0 ||
+      rect.left > innerWidth
+    ) {
       hideButton();
       return;
     }
@@ -473,14 +618,18 @@ import { compareText } from "./text-diff.ts";
       EDGE_GAP,
       Math.min(
         innerWidth - ICON_SIZE - EDGE_GAP,
-        preferredLeft + ICON_SIZE <= innerWidth ? preferredLeft : rect.left - ICON_SIZE - EDGE_GAP,
+        preferredLeft + ICON_SIZE <= innerWidth
+          ? preferredLeft
+          : rect.left - ICON_SIZE - EDGE_GAP,
       ),
     );
     const top = Math.max(
       EDGE_GAP,
       Math.min(
         innerHeight - ICON_SIZE - EDGE_GAP,
-        preferredTop + ICON_SIZE <= innerHeight ? preferredTop : rect.top - ICON_SIZE - EDGE_GAP,
+        preferredTop + ICON_SIZE <= innerHeight
+          ? preferredTop
+          : rect.top - ICON_SIZE - EDGE_GAP,
       ),
     );
 
@@ -507,7 +656,11 @@ import { compareText } from "./text-diff.ts";
   }
 
   function repositionSelectionOverlay(): void {
-    if (panel.classList.contains("visible") && sourceSnapshot && activeSelection) {
+    if (
+      panel.classList.contains("visible") &&
+      sourceSnapshot &&
+      activeSelection
+    ) {
       const rect = snapshotRect(sourceSnapshot);
       if (rect) activeSelection = { snapshot: sourceSnapshot, rect };
       positionOverlay();
@@ -524,15 +677,18 @@ import { compareText } from "./text-diff.ts";
     const selectionRect = activeSelection.rect;
     const maxLeft = innerWidth - width - PANEL_GAP;
     const maxTop = innerHeight - height - PANEL_GAP;
-    const clampLeft = (left: number) => Math.max(PANEL_GAP, Math.min(maxLeft, left));
-    const clampTop = (top: number) => Math.max(PANEL_GAP, Math.min(maxTop, top));
+    const clampLeft = (left: number) =>
+      Math.max(PANEL_GAP, Math.min(maxLeft, left));
+    const clampTop = (top: number) =>
+      Math.max(PANEL_GAP, Math.min(maxTop, top));
     const alignedLeft = clampLeft(selectionRect.left);
     const alignedTop = clampTop(selectionRect.top);
     const candidates = [
       {
         left: alignedLeft,
         top: selectionRect.bottom + PANEL_GAP,
-        fits: selectionRect.bottom + PANEL_GAP + height <= innerHeight - PANEL_GAP,
+        fits:
+          selectionRect.bottom + PANEL_GAP + height <= innerHeight - PANEL_GAP,
       },
       {
         left: alignedLeft,
@@ -550,7 +706,8 @@ import { compareText } from "./text-diff.ts";
         fits: selectionRect.left - width - PANEL_GAP >= PANEL_GAP,
       },
     ];
-    const position = candidates.find((candidate) => candidate.fits) ??
+    const position =
+      candidates.find((candidate) => candidate.fits) ??
       (innerHeight - selectionRect.bottom >= selectionRect.top
         ? candidates[0]!
         : candidates[1]!);
@@ -563,7 +720,10 @@ import { compareText } from "./text-diff.ts";
     panelFrame = requestAnimationFrame(positionPanel);
   }
 
-  function dispatchEditEvents(element: HTMLElement, insertedText: string): void {
+  function dispatchEditEvents(
+    element: HTMLElement,
+    insertedText: string,
+  ): void {
     try {
       element.dispatchEvent(
         new InputEvent("input", {
@@ -599,7 +759,9 @@ import { compareText } from "./text-diff.ts";
       }
       const current = element.value;
       if (current !== snapshot.fullText) {
-        throw new Error("The text changed while it was being refined. Please try again.");
+        throw new Error(
+          "The text changed while it was being refined. Please try again.",
+        );
       }
       element.focus();
       const updated = `${current.slice(0, snapshot.start)}${revisedText}${current.slice(snapshot.end)}`;
@@ -615,7 +777,9 @@ import { compareText } from "./text-diff.ts";
       throw new Error("The original selection is no longer available.");
     }
     if (range.toString() !== snapshot.text) {
-      throw new Error("The text changed while it was being refined. Please try again.");
+      throw new Error(
+        "The text changed while it was being refined. Please try again.",
+      );
     }
 
     range.deleteContents();
@@ -630,7 +794,7 @@ import { compareText } from "./text-diff.ts";
   }
 
   function showLoading(message = "Refining locally…") {
-    button.classList.add("loading");
+    setLoading(true);
     streamingResultElement = null;
     panelBody.innerHTML = `<div class="status"><span class="status-dot"></span><span></span></div>`;
     panelBody.querySelector(".status span:last-child")!.textContent = message;
@@ -666,7 +830,7 @@ import { compareText } from "./text-diff.ts";
     panelActions.classList.remove("visible");
     panel.classList.add("visible");
     hideButton();
-    button.classList.remove("loading");
+    setLoading(false);
     schedulePanelPosition();
   }
 
@@ -676,7 +840,7 @@ import { compareText } from "./text-diff.ts";
     const original = sourceSnapshot?.text ?? "";
     const comparison = compareText(original, result.refined);
     const views = ["refined", "changes", "original"] as const;
-    type ResultView = typeof views[number];
+    type ResultView = (typeof views)[number];
 
     const tabs = document.createElement("div");
     tabs.className = "result-tabs";
@@ -712,12 +876,16 @@ import { compareText } from "./text-diff.ts";
         }
 
         const count = document.createElement("span");
-        count.textContent = comparison.changeCount === 0
-          ? "No text changes"
-          : `${comparison.changeCount} changed ${comparison.changeCount === 1 ? "section" : "sections"}`;
+        count.textContent =
+          comparison.changeCount === 0
+            ? "No text changes"
+            : `${comparison.changeCount} changed ${comparison.changeCount === 1 ? "section" : "sections"}`;
         details.append(count);
         if (comparison.changeCount > 0) {
-          for (const [kind, label] of [["removed", "Removed"], ["added", "Added"]] as const) {
+          for (const [kind, label] of [
+            ["removed", "Removed"],
+            ["added", "Added"],
+          ] as const) {
             const legend = document.createElement("span");
             legend.className = "comparison-legend";
             const swatch = document.createElement("span");
@@ -743,10 +911,12 @@ import { compareText } from "./text-diff.ts";
       tab.textContent = view[0]!.toUpperCase() + view.slice(1);
       tab.addEventListener("click", () => renderView(view));
       tab.addEventListener("keydown", (event) => {
-        const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+        const direction =
+          event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
         if (direction === 0) return;
         event.preventDefault();
-        const nextIndex = (views.indexOf(view) + direction + views.length) % views.length;
+        const nextIndex =
+          (views.indexOf(view) + direction + views.length) % views.length;
         const nextView = views[nextIndex]!;
         renderView(nextView);
         tabButtons.get(nextView)?.focus();
@@ -765,7 +935,8 @@ import { compareText } from "./text-diff.ts";
       metrics.className = "metrics";
       const parts = [];
       if (tokensPerSecond) parts.push(`${tokensPerSecond} tokens/s`);
-      if (totalDurationMs) parts.push(`${(totalDurationMs / 1000).toFixed(1)} s`);
+      if (totalDurationMs)
+        parts.push(`${(totalDurationMs / 1000).toFixed(1)} s`);
       metrics.textContent = parts.join(" · ");
       panelBody.append(metrics);
     }
@@ -774,7 +945,7 @@ import { compareText } from "./text-diff.ts";
     panelActions.classList.add("visible");
     panel.classList.add("visible");
     hideButton();
-    button.classList.remove("loading");
+    setLoading(false);
     schedulePanelPosition();
   }
 
@@ -801,7 +972,8 @@ import { compareText } from "./text-diff.ts";
 
       port.onMessage.addListener((event: unknown) => {
         if (settled) return;
-        if (typeof event !== "object" || event === null || !("type" in event)) return;
+        if (typeof event !== "object" || event === null || !("type" in event))
+          return;
         if (event.type === "starting") {
           onStarting();
           return;
@@ -811,7 +983,10 @@ import { compareText } from "./text-diff.ts";
           return;
         }
         if (event.type === "delta") {
-          accumulated += "delta" in event && typeof event.delta === "string" ? event.delta : "";
+          accumulated +=
+            "delta" in event && typeof event.delta === "string"
+              ? event.delta
+              : "";
           onDelta(accumulated);
           return;
         }
@@ -842,7 +1017,8 @@ import { compareText } from "./text-diff.ts";
         cleanup();
         reject(
           new Error(
-            chrome.runtime.lastError?.message || "The refinement connection closed unexpectedly.",
+            chrome.runtime.lastError?.message ||
+              "The refinement connection closed unexpectedly.",
           ),
         );
       });
@@ -861,7 +1037,9 @@ import { compareText } from "./text-diff.ts";
       return;
     }
     if (text.length > MAX_TEXT_LENGTH) {
-      showError(`Please refine no more than ${MAX_TEXT_LENGTH.toLocaleString()} characters at once.`);
+      showError(
+        `Please refine no more than ${MAX_TEXT_LENGTH.toLocaleString()} characters at once.`,
+      );
       return;
     }
 
@@ -876,7 +1054,10 @@ import { compareText } from "./text-diff.ts";
       if (requestId === activeRequest) showResult(result);
     } catch (error: unknown) {
       if (requestId === activeRequest) {
-        const message = error instanceof Error ? error.message : "The refinement request failed.";
+        const message =
+          error instanceof Error
+            ? error.message
+            : "The refinement request failed.";
         const suffix = /fetch|service|connect|Receiving end/i.test(message)
           ? " Make sure the backend is running on 127.0.0.1:3030."
           : "";
@@ -900,13 +1081,32 @@ import { compareText } from "./text-diff.ts";
 
   applyButton.addEventListener("click", () => {
     try {
-      if (!sourceSnapshot) throw new Error("The original text is no longer available.");
+      if (!sourceSnapshot)
+        throw new Error("The original text is no longer available.");
       applyRevision(sourceSnapshot, panel.dataset.refined || "");
       closePanel();
     } catch (error: unknown) {
-      showError(error instanceof Error ? error.message : "The revision could not be applied.");
+      showError(
+        error instanceof Error
+          ? error.message
+          : "The revision could not be applied.",
+      );
     }
   });
+
+  let pointerFrame = 0;
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.addEventListener(
+      "pointermove",
+      (event) => {
+        cancelAnimationFrame(pointerFrame);
+        pointerFrame = requestAnimationFrame(() =>
+          lookAt(event.clientX, event.clientY),
+        );
+      },
+      { capture: true, passive: true },
+    );
+  }
 
   document.addEventListener("mouseup", scheduleSelectionRefresh, true);
   document.addEventListener("keyup", scheduleSelectionRefresh, true);
