@@ -3,7 +3,7 @@
 A TypeScript Chrome extension and local API that refine English text with a GGUF
 model running directly in Node.js. Select text in an input, textarea, or
 content-editable field to display a floating refinement button. The extension
-streams each revision into a preview before changing the page.
+streams three revisions into a preview before changing the page.
 
 <p align="center">
   <img width="624" height="407" alt="Screenshot 2026-10-22 at 23 13 32" src="https://github.com/user-attachments/assets/ad484694-3b4a-49e0-aa2f-36f1a9e5086b" />
@@ -63,7 +63,7 @@ Supported environment variables:
 |---|---:|---|
 | `MODEL` | `hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M` | GGUF path, URL, or model URI |
 | `CONTEXT_SIZE` | `8192` | Context window in tokens |
-| `MAX_OUTPUT_TOKENS` | `1024` | Maximum generated tokens per revision |
+| `MAX_OUTPUT_TOKENS` | `1024` | Maximum generated tokens for each version |
 | `INFERENCE_TIMEOUT_MS` | `120000` | Generation timeout after model loading |
 | `PORT` | `3030` | Backend port |
 | `HOST` | `127.0.0.1` | Backend listening address |
@@ -246,9 +246,10 @@ The extension cannot run on protected Chrome pages such as
 
 1. Select the text you want to refine.
 2. Click the orange face button beside the selection. Its eyes follow the pointer, and they roll while the text is refined.
-3. Review highlighted additions and removals in **Changes**, or switch between
-   the **Refined** and **Original** views.
-4. Click **Apply** to replace exactly the selected text or **Copy** to copy it.
+3. Review the **Refined**, **Casual**, and **Professional** versions stacked in
+   the preview.
+4. Use each version's **Copy** button to copy it or **Apply** to replace exactly
+   the selected text with that version.
 
 The preview includes the model's generation rate and total response time.
 
@@ -291,6 +292,8 @@ Response:
 ```json
 {
   "refined": "Revised text",
+  "casual": "A conversational version",
+  "professional": "A workplace-ready version",
   "model": "hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M",
   "metrics": {
     "totalDurationMs": 2500,
@@ -312,7 +315,10 @@ The extension uses this endpoint so text appears chunk by chunk:
 
 ```jsonl
 {"type":"start","model":"hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M"}
-{"type":"delta","delta":"Revised"}
-{"type":"delta","delta":" text"}
-{"type":"done","refined":"Revised text","model":"hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M","metrics":{}}
+{"type":"version-start","version":"refined"}
+{"type":"delta","version":"refined","delta":"Revised"}
+{"type":"delta","version":"refined","delta":" text"}
+{"type":"version-start","version":"casual"}
+{"type":"version-start","version":"professional"}
+{"type":"done","refined":"Revised text","casual":"Casual revision","professional":"Professional revision","model":"hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M","metrics":{}}
 ```
