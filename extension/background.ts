@@ -1,4 +1,5 @@
 import { NATIVE_HOST_NAME, SERVER_URL } from "../native-host/constants.ts";
+import { loadSettings } from "./settings.ts";
 
 const API_URL = `${SERVER_URL}/api/refine`;
 const STREAM_API_URL = `${SERVER_URL}/api/refine/stream`;
@@ -90,6 +91,22 @@ async function ensureServer(onStarting: () => void): Promise<void> {
   await pendingServerStart;
 }
 
+async function refineBody(text: string): Promise<string> {
+  const { provider, openaiModel } = await loadSettings();
+  return JSON.stringify({ text, provider, model: openaiModel });
+}
+
+chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse): boolean => {
+  if (typeof message !== "object" || message === null || !("type" in message) || message.type !== "ensure-server") {
+    return false;
+  }
+  ensureServer(() => {}).then(
+    () => sendResponse({ ok: true }),
+    (error: unknown) => sendResponse({ ok: false, error: errorMessage(error, "The local server could not start.") }),
+  );
+  return true;
+});
+
 chrome.runtime.onMessage.addListener(
   (message: unknown, _sender, sendResponse): boolean => {
     if (
@@ -105,12 +122,15 @@ chrome.runtime.onMessage.addListener(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: request.text }),
-      signal: controller.signal,
-    })
+    refineBody(request.text)
+      .then((body) =>
+        fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          signal: controller.signal,
+        }),
+      )
       .then(async (response) => {
         let payload: ApiError;
         try {
@@ -186,7 +206,7 @@ chrome.runtime.onConnect.addListener((port) => {
       const response = await fetch(STREAM_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: request.text }),
+        body: await refineBody(request.text),
         signal: controller.signal,
       });
 

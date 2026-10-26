@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Refiner settings</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light dark;
+      --page: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --control-border: #cbd5e1;
+      --hover: #f1f5f9;
+      --primary: #111111;
+      --primary-text: #ffffff;
+      --ok: #16a34a;
+      --error: #b91c1c;
+      --shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #020617;
+        --card: #0f172a;
+        --text: #f8fafc;
+        --muted: #94a3b8;
+        --border: #334155;
+        --control-border: #475569;
+        --hover: #1e293b;
+        --primary: #059669;
+        --ok: #34d399;
+        --error: #f87171;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+      }
+    }
+    body {
+      margin: 0;
+      padding: 48px 16px;
+      background: var(--page);
+      color: var(--text);
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 8px 20px 20px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+    header { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; }
+    #mark { width: 32px; height: 32px; overflow: visible; }
+    h1 { margin: 0; font-size: 16px; font-weight: 700; }
+    section { padding: 16px 0; border-top: 1px solid var(--border); }
+    header + section { margin-top: 8px; }
+    h2 { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
+    label { display: block; margin: 12px 0 5px; color: var(--muted); font-size: 12px; font-weight: 500; }
+    h2 + label { margin-top: 0; }
+    select {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--control-border);
+      border-radius: 6px;
+      background: var(--card);
+      color: var(--text);
+      font: inherit;
+    }
+    select:disabled { opacity: 0.55; }
+    select:focus-visible, button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .state { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .state span:last-child { overflow: hidden; text-overflow: ellipsis; }
+    .dot { flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--control-border); }
+    .dot.connected { background: var(--ok); }
+    .dot.pending { background: #f59e0b; }
+    button {
+      flex: none;
+      padding: 6px 14px;
+      border: 1px solid var(--control-border);
+      border-radius: 6px;
+      background: var(--card);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: var(--hover); }
+    button:disabled { opacity: 0.55; cursor: default; }
+    button.primary { border-color: var(--primary); background: var(--primary); color: var(--primary-text); }
+    button.primary:hover:not(:disabled) { background: var(--primary); opacity: 0.9; }
+    [hidden] { display: none !important; }
+    .hint { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+    .error { margin: 10px 0 0; color: var(--error); white-space: pre-wrap; }
+    .error:empty { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <svg id="mark" viewBox="0 0 32 32" aria-hidden="true"></svg>
+      <h1>Refiner settings</h1>
+    </header>
+
+    <section>
+      <h2>Model</h2>
+      <label for="provider">Use</label>
+      <select id="provider">
+        <option value="local">Local model</option>
+        <option value="openai">ChatGPT (OpenAI)</option>
+      </select>
+      <div id="model-field" hidden>
+        <label for="model">ChatGPT model</label>
+        <select id="model" disabled>
+          <option value="">Connect an account to list models</option>
+        </select>
+      </div>
+    </section>
+
+    <section>
+      <h2>OpenAI account</h2>
+      <div class="row">
+        <div class="state"><span class="dot" id="dot"></span><span id="status">Checking…</span></div>
+        <button class="primary" id="connect" hidden>Connect</button>
+        <button id="disconnect" hidden>Disconnect</button>
+      </div>
+      <p class="hint" id="storage"></p>
+      <p class="error" id="error" role="alert"></p>
+    </section>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

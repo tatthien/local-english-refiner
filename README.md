@@ -322,3 +322,11 @@ The extension uses this endpoint so text appears chunk by chunk:
 {"type":"version-start","version":"professional"}
 {"type":"done","refined":"Revised text","casual":"Casual revision","professional":"Professional revision","model":"hf:bartowski/Qwen2.5-3B-Instruct-GGUF:Q4_K_M","metrics":{}}
 ```
+
+## Use ChatGPT instead of the local model
+
+1. Open the extension options page (right-click the extension icon, then **Options**).
+2. Click **Connect** and sign in with ChatGPT in the new tab.
+3. Set **Use** to **ChatGPT (OpenAI)**.
+
+The sign-in uses the public Codex CLI client ID and the undocumented ChatGPT Codex backend. OpenAI can change or block it at any time. The tokens stay on your machine: the macOS keychain on macOS, or a file with mode `0600` on other systems. The extension never holds the tokens.

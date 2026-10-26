@@ -3,6 +3,8 @@ import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type {
@@ -10,7 +12,9 @@ import type {
   GenerationResult,
   TextRefiner,
 } from "./llama-refiner.ts";
+import { FileStore } from "./credentials.ts";
 import { createLogger } from "./logger.ts";
+import { OpenAIAuth } from "./openai-auth.ts";
 import {
   configFromEnvironment,
   createApp,
@@ -226,4 +230,27 @@ test("idle timer waits for open responses to close", async (context) => {
   await response.text();
   await delay(300);
   assert.equal(idleCalls, 1);
+});
+
+test("account endpoints and OpenAI refinement reject non-extension origins", async () => {
+  const app = createTestApp();
+  const web = { Origin: "https://example.com", "Content-Type": "application/json" };
+
+  const logout = await app.request("/api/auth/openai/logout", { method: "POST", headers: web });
+  assert.equal(logout.status, 403);
+
+  const refine = await app.request("/api/refine", {
+    method: "POST",
+    headers: web,
+    body: JSON.stringify({ text: "hi", provider: "openai" }),
+  });
+  assert.equal(refine.status, 403);
+});
+
+test("account status answers a GET that carries no Origin header", async () => {
+  const store = new FileStore(join(tmpdir(), `refiner-${process.pid}`, "openai.json"));
+  const app = createApp({}, undefined, silentLogger, new OpenAIAuth(store));
+  const response = await app.request("/api/auth/openai");
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { connected: boolean }).connected, false);
 });
