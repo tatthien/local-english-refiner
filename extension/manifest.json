@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "Refine English writing with a local GGUF model.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtre53RUTk7IURkV6OPqJ/Gv7e6ujdBRmfRyaZ0BKT8bJxGvSNAD30YekPcNQTvSLnuERCO0FA18nmbeScQ4HtM0jf15ROK1GShMmqB3A7IRv6L79yrtIJ24KX26Kv4Jg4L8ozspgQwOLlN1TDQ8YqEkfzGRnAk3LPlCgZctKAoxLeZ4b62ldCMdU8f0Q4eTxCURtBhq8+90T1vCX2fqee7VnIYxKX9jOv0yma+niW5Sa8YmNDRqci/8ZjhKtSfnZ1zwXaRetpcx7Im0eHWnYwaQMMvp8DWGJx8tR7AP9cw6CCOj1XlGa2r2hVnQtOlQvDe5yeOBgUeGmYvYxSBkwCwIDAQAB",
-  "permissions": ["nativeMessaging"],
+  "permissions": ["nativeMessaging", "storage"],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "host_permissions": [
     "http://127.0.0.1:3030/*",
     "http://localhost:3030/*"

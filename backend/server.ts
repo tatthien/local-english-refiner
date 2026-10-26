@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { serve, type ServerType } from "@hono/node-server";
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { stream } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
@@ -14,6 +14,8 @@ import {
   type GenerationResult,
   type TextRefiner,
 } from "./llama-refiner.ts";
+import { OpenAIAuth } from "./openai-auth.ts";
+import { listOpenAIModels, OpenAIRefiner } from "./openai-refiner.ts";
 import {
   createLogger,
   parseLogLevel,
@@ -132,7 +134,13 @@ function allowedOrigin(origin: string | undefined): string | null {
   return null;
 }
 
-function isTextRequest(value: unknown): value is { text: string } {
+interface RefineBody {
+  text: string;
+  provider?: "local" | "openai";
+  model?: string;
+}
+
+function isTextRequest(value: unknown): value is RefineBody {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -285,7 +293,7 @@ export async function streamRefinement(
 async function parseRefinementBody(
   context: AppContext,
   config: AppConfig,
-): Promise<{ text: string } | Response> {
+): Promise<RefineBody | Response> {
   let body: unknown;
   try {
     body = await context.req.json<unknown>();
@@ -314,6 +322,7 @@ export function createApp(
   overrides: Partial<AppConfig> = {},
   refiner?: TextRefiner,
   logger?: Logger,
+  openaiAuth: OpenAIAuth = new OpenAIAuth(),
 ): Hono<AppEnvironment> {
   const config: AppConfig = { ...DEFAULTS, ...overrides };
   const appLogger = logger ?? createLogger(config.logLevel);
@@ -355,6 +364,23 @@ export function createApp(
     }),
   );
 
+  /** Any web page can send a simple POST to localhost, so spending the user's account needs the extension origin. */
+  const requireExtension = (context: AppContext): Response | undefined =>
+    context.req.header("Origin")?.startsWith("chrome-extension://")
+      ? undefined
+      : context.json({ error: "Only the extension can use this endpoint." }, 403);
+  /** Chrome sends no Origin on GET, and CORS already stops other sites from reading the status. */
+  const extensionOnly: MiddlewareHandler = async (context, next) =>
+    (context.req.method === "GET" ? undefined : requireExtension(context as AppContext)) ?? next();
+
+  /** Picks the refiner and the model name that the done event reports. */
+  const selectRefiner = (body: RefineBody): { refiner: TextRefiner; config: AppConfig } => {
+    if (body.provider !== "openai") return { refiner: textRefiner, config };
+    const model = body.model?.trim();
+    if (!model) throw new Error("Choose a ChatGPT model in the extension settings.");
+    return { refiner: new OpenAIRefiner(openaiAuth, model), config: { ...config, model } };
+  };
+
   const limitRequestBody = bodyLimit({
     maxSize: config.maxInputCharacters * 4,
     onError: (context) => context.json({ error: "Request body is too large." }, 413),
@@ -367,12 +393,42 @@ export function createApp(
     }),
   );
 
+  app.use("/api/auth/*", extensionOnly);
+
+  app.get("/api/auth/openai", async (context) => context.json(await openaiAuth.status()));
+
+  app.get("/api/auth/openai/models", async (context) => {
+    try {
+      return context.json({ models: await listOpenAIModels(openaiAuth) });
+    } catch (error) {
+      return context.json({ error: errorMessage(error) }, 502);
+    }
+  });
+
+  app.post("/api/auth/openai/login", async (context) => {
+    try {
+      return context.json({ url: await openaiAuth.startLogin() });
+    } catch (error) {
+      return context.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/api/auth/openai/logout", async (context) => {
+    await openaiAuth.logout();
+    return context.json({ ok: true });
+  });
+
   app.post("/api/refine", limitRequestBody, async (context) => {
     const body = await parseRefinementBody(context, config);
     if (body instanceof Response) return body;
+    if (body.provider === "openai") {
+      const denied = requireExtension(context);
+      if (denied) return denied;
+    }
+    const selected = selectRefiner(body);
 
     try {
-      return context.json(await refineText(body.text, config, textRefiner));
+      return context.json(await refineText(body.text, selected.config, selected.refiner));
     } catch (error) {
       appLogger.error(
         {
@@ -390,6 +446,11 @@ export function createApp(
   app.post("/api/refine/stream", limitRequestBody, async (context) => {
     const body = await parseRefinementBody(context, config);
     if (body instanceof Response) return body;
+    if (body.provider === "openai") {
+      const denied = requireExtension(context);
+      if (denied) return denied;
+    }
+    const selected = selectRefiner(body);
 
     context.header("Content-Type", "application/x-ndjson; charset=utf-8");
     return stream(context, async (output) => {
@@ -399,11 +460,11 @@ export function createApp(
       try {
         await streamRefinement(
           body.text,
-          config,
+          selected.config,
           async (event) => {
             await output.writeln(JSON.stringify(event));
           },
-          textRefiner,
+          selected.refiner,
           clientController.signal,
         );
       } catch (error) {

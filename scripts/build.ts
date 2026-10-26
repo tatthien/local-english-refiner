@@ -37,6 +37,7 @@ await Promise.all([
     entryPoints: {
       background: resolve(root, "extension/background.ts"),
       content: resolve(root, "extension/content.ts"),
+      options: resolve(root, "extension/options.ts"),
     },
     outdir: resolve(output, "extension"),
     bundle: true,
@@ -50,6 +51,11 @@ await Promise.all([
 await copyFile(
   resolve(root, "extension/manifest.json"),
   resolve(output, "extension/manifest.json"),
+);
+
+await copyFile(
+  resolve(root, "extension/options.html"),
+  resolve(output, "extension/options.html"),
 );
 
 console.log("Built backend, native host, and Chrome extension in dist/.");
