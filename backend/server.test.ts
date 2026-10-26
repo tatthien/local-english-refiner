@@ -95,17 +95,10 @@ test("refine endpoint delegates to the local model", async () => {
     metrics: { promptTokens: number; outputTokens: number };
   };
   assert.equal(result.refined, "This is the revised text.");
-  assert.equal(result.casual, "This is the revised text.");
-  assert.equal(result.professional, "This is the revised text.");
   assert.equal(result.model, "test-model");
   assert.equal(result.metrics.promptTokens, 20);
   assert.equal(result.metrics.outputTokens, 12);
-  assert.equal(refiner.calls.length, 3);
-  assert.deepEqual(refiner.calls.map((call) => call.options.style), [
-    "refined",
-    "casual",
-    "professional",
-  ]);
+  assert.equal(refiner.calls.length, 1);
   assert.equal(refiner.calls[0]?.text, "This are incorrect.");
   assert.equal(refiner.calls[0]?.options.signal.aborted, false);
 });
@@ -163,18 +156,10 @@ test("stream endpoint forwards model output incrementally", async () => {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.deepEqual(
     events.map((event) => event.type),
-    [
-      "start",
-      "version-start", "delta", "delta",
-      "version-start", "delta", "delta",
-      "version-start", "delta", "delta",
-      "done",
-    ],
+    ["start", "delta", "delta", "done"],
   );
-  assert.equal(`${events[2]?.delta}${events[3]?.delta}`, "This is the revised text.");
-  assert.equal(events[10]?.refined, "This is the revised text.");
-  assert.equal(events[10]?.casual, "This is the revised text.");
-  assert.equal(events[10]?.professional, "This is the revised text.");
+  assert.equal(`${events[1]?.delta}${events[2]?.delta}`, "This is the revised text.");
+  assert.equal(events[3]?.refined, "This is the revised text.");
   assert.equal(refiner.calls[0]?.options.signal.aborted, false);
 });
 

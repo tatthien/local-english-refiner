@@ -8,8 +8,6 @@ interface RefinementMetrics {
 interface RefinementResult {
   type: "done";
   refined: string;
-  casual: string;
-  professional: string;
   model: string;
   metrics: RefinementMetrics;
 }

@@ -46,20 +46,14 @@ export interface RefinementMetrics {
 
 export interface RefinementResult {
   refined: string;
-  casual: string;
-  professional: string;
   model: string;
   metrics: RefinementMetrics;
 }
 
 export type RefinementEvent =
   | { type: "start"; model: string }
-  | { type: "version-start"; version: RefinementVersion }
-  | { type: "delta"; version: RefinementVersion; delta: string }
+  | { type: "delta"; delta: string }
   | ({ type: "done" } & RefinementResult);
-
-export type RefinementVersion = "refined" | "casual" | "professional";
-const VERSIONS: readonly RefinementVersion[] = ["refined", "casual", "professional"];
 
 type AppEnvironment = {
   Variables: {
@@ -204,22 +198,14 @@ export async function refineText(
   const startedAt = performance.now();
 
   try {
-    const results: GenerationResult[] = [];
-    for (const style of VERSIONS) {
-      results.push(await refiner.generate(text, { signal: abort.signal, style }));
-    }
-    const [refined, casual, professional] = results.map((result) => result.text.trim());
-    if (!refined || !casual || !professional) throw new Error("The model returned an empty revision.");
+    const result = await refiner.generate(text, { signal: abort.signal });
+    const refined = result.text.trim();
+    if (!refined) throw new Error("The model returned an empty revision.");
     const totalDurationMs = Math.round(performance.now() - startedAt);
     return {
       refined,
-      casual,
-      professional,
       model: config.model,
-      metrics: metricsFromUsage({
-        promptTokens: results.reduce((sum, result) => sum + result.promptTokens, 0),
-        outputTokens: results.reduce((sum, result) => sum + result.outputTokens, 0),
-      }, totalDurationMs),
+      metrics: metricsFromUsage(result, totalDurationMs),
     };
   } catch (error) {
     if (abort.signal.aborted && abort.signal.reason instanceof Error) throw abort.signal.reason;
@@ -244,41 +230,28 @@ export async function streamRefinement(
     let writeError: unknown;
 
     await onEvent({ type: "start", model: config.model });
-    const values: Partial<Record<RefinementVersion, string>> = {};
-    const results: GenerationResult[] = [];
-    for (const version of VERSIONS) {
-      await onEvent({ type: "version-start", version });
-      let accumulated = "";
-      const result = await refiner.generate(text, {
-        signal: abort.signal,
-        style: version,
-        onTextChunk(delta) {
-          accumulated += delta;
-          pendingWrite = pendingWrite
-            .then(() => onEvent({ type: "delta", version, delta }))
-            .catch((error: unknown) => {
-              writeError ??= error;
-              abort.abort(error);
-            });
-        },
-      });
-      await pendingWrite;
-      if (writeError !== undefined) throw writeError;
-      values[version] = (result.text || accumulated).trim();
-      if (!values[version]) throw new Error("The model returned an empty revision.");
-      results.push(result);
-    }
+    const result = await refiner.generate(text, {
+      signal: abort.signal,
+      onTextChunk(delta) {
+        pendingWrite = pendingWrite
+          .then(() => onEvent({ type: "delta", delta }))
+          .catch((error: unknown) => {
+            writeError ??= error;
+            abort.abort(error);
+          });
+      },
+    });
+    await pendingWrite;
+    if (writeError !== undefined) throw writeError;
+
+    const trimmed = result.text.trim();
+    if (!trimmed) throw new Error("The model returned an empty revision.");
     const totalDurationMs = Math.round(performance.now() - startedAt);
     const done = {
       type: "done" as const,
-      refined: values.refined!,
-      casual: values.casual!,
-      professional: values.professional!,
+      refined: trimmed,
       model: config.model,
-      metrics: metricsFromUsage({
-        promptTokens: results.reduce((sum, result) => sum + result.promptTokens, 0),
-        outputTokens: results.reduce((sum, result) => sum + result.outputTokens, 0),
-      }, totalDurationMs),
+      metrics: metricsFromUsage(result, totalDurationMs),
     };
     await onEvent(done);
     return done;

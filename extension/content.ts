@@ -1,3 +1,5 @@
+import { compareText } from "./text-diff.ts";
+
 (() => {
   if (window.__localEnglishRefinerLoaded) return;
   window.__localEnglishRefinerLoaded = true;
@@ -45,7 +47,7 @@
   let activeRequest = 0;
   let sourceSnapshot: SourceSnapshot | null = null;
   let activeStreamCancel: (() => void) | null = null;
-  const streamingRows = new Map<string, HTMLParagraphElement>();
+  let streamingResultElement: HTMLParagraphElement | null = null;
   let panelFrame = 0;
 
   const host = document.createElement("div");
@@ -116,7 +118,7 @@
     .panel {
       position: fixed;
       display: none;
-      width: min(500px, calc(100vw - 24px));
+      width: min(390px, calc(100vw - 24px));
       max-height: min(440px, calc(100vh - 24px));
       overflow: hidden;
       border: 1px solid #e2e8f0;
@@ -150,6 +152,32 @@
     }
     .close-button:hover { background: #f1f5f9; color: #0f172a; }
     .panel-body { padding: 12px 14px; overflow: auto; max-height: 326px; }
+    .result-tabs {
+      display: flex;
+      gap: 4px;
+      margin: -2px 0 12px;
+      padding: 3px;
+      border-radius: 10px;
+      background: #f1f5f9;
+    }
+    .result-tab {
+      flex: 1;
+      padding: 4px 8px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .result-tab:hover { color: #0f172a; }
+    .result-tab.active {
+      background: #ffffff;
+      color: #0f172a;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+    }
+    .result-tab:focus-visible { outline: 2px solid #10b981; outline-offset: 1px; }
     .result {
       margin: 0;
       white-space: pre-wrap;
@@ -169,6 +197,20 @@
       text-decoration: line-through;
       text-decoration-thickness: 1.5px;
     }
+    .comparison-details {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 12px;
+      margin-top: 10px;
+      color: #64748b;
+      font-size: 12px;
+    }
+    .comparison-details[hidden] { display: none; }
+    .comparison-legend { display: inline-flex; align-items: center; gap: 5px; }
+    .legend-swatch { width: 9px; height: 9px; border-radius: 2px; }
+    .legend-swatch.added { background: #86efac; }
+    .legend-swatch.removed { background: #fca5a5; }
     .status { display: flex; align-items: center; gap: 9px; color: #475569; }
     .status-dot {
       width: 14px;
@@ -181,19 +223,22 @@
     }
     .error { margin: 0; color: #b91c1c; white-space: pre-wrap; }
     .metrics { margin-top: 10px; color: #94a3b8; font-size: 12px; }
-    .version-row { padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
-    .version-row:last-child { border-bottom: 0; }
-    .version-title { margin: 0 0 5px; font-size: 14px; font-weight: 700; text-transform: capitalize; }
-    .version-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+    .panel-actions {
+      display: none;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 10px 14px 13px;
+      border-top: 1px solid #f1f5f9;
+    }
+    .panel-actions.visible { display: flex; }
     .action-button {
-      min-height: 0;
-      padding: 1px 10px;
+      min-height: 34px;
+      padding: 6px 12px;
       border: 1px solid #cbd5e1;
-      border-radius: 6px;
+      border-radius: 9px;
       background: white;
       color: #334155;
-      font-size: 12px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
     }
     .action-button:hover { background: #f8fafc; }
@@ -201,9 +246,17 @@
     .action-button.primary:hover { background: #111111; }
     @media (prefers-color-scheme: dark) {
       .panel { border-color: #334155; background: #0f172a; color: #f8fafc; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); }
+      .panel-actions { border-color: #1e293b; }
       .close-button { color: #94a3b8; }
       .close-button:hover, .action-button:hover { background: #1e293b; color: #f8fafc; }
       .status { color: #cbd5e1; }
+      .result-tabs { background: #1e293b; }
+      .result-tab { color: #94a3b8; }
+      .result-tab:hover { color: #f8fafc; }
+      .result-tab.active { background: #334155; color: #f8fafc; box-shadow: none; }
+      .diff-added { background: rgba(22, 101, 52, 0.55); color: #dcfce7; }
+      .diff-removed { background: rgba(153, 27, 27, 0.55); color: #fee2e2; }
+      .comparison-details { color: #94a3b8; }
       .action-button { border-color: #475569; background: #0f172a; color: #e2e8f0; }
       .action-button.primary { border-color: #10b981; background: #059669; color: white; }
     }
@@ -242,14 +295,21 @@
       <span class="panel-mark">${faceSvg}</span>
       <button class="close-button" type="button" aria-label="Close">✕</button>
     </header>
-    <div class="panel-body"><div class="status"><span class="status-dot"></span><span>Refining locally…</span></div></div>`;
+    <div class="panel-body"><div class="status"><span class="status-dot"></span><span>Refining locally…</span></div></div>
+    <footer class="panel-actions">
+      <button class="action-button copy-button" type="button">Copy</button>
+      <button class="action-button primary apply-button" type="button">Apply</button>
+    </footer>`;
 
   shadow.append(style, button, panel);
   document.documentElement.append(host);
 
   const panelBody = panel.querySelector<HTMLDivElement>(".panel-body")!;
+  const panelActions = panel.querySelector<HTMLElement>(".panel-actions")!;
   const panelMark = panel.querySelector<HTMLElement>(".panel-mark")!;
   const closeButton = panel.querySelector<HTMLButtonElement>(".close-button")!;
+  const copyButton = panel.querySelector<HTMLButtonElement>(".copy-button")!;
+  const applyButton = panel.querySelector<HTMLButtonElement>(".apply-button")!;
 
   /** Pupils are drawn at rest, so a target offset from the eye center becomes a translate from rest. */
   function pupilAt(x: number, y: number): string {
@@ -519,6 +579,7 @@
 
   function hidePanel() {
     panel.classList.remove("visible");
+    panelActions.classList.remove("visible");
   }
 
   function closePanel() {
@@ -734,44 +795,39 @@
 
   function showLoading(message = "Refining locally…") {
     setLoading(true);
-    streamingRows.clear();
+    streamingResultElement = null;
     panelBody.innerHTML = `<div class="status"><span class="status-dot"></span><span></span></div>`;
     panelBody.querySelector(".status span:last-child")!.textContent = message;
+    panelActions.classList.remove("visible");
     panel.classList.add("visible");
     hideButton();
     positionPanel();
   }
 
-  function showStreaming(version: string, text: string): void {
-    let result = streamingRows.get(version);
-    if (!result) {
-      if (panelBody.querySelector(".status")) panelBody.innerHTML = "";
-      const row = document.createElement("section");
-      row.className = "version-row";
-      const title = document.createElement("h3");
-      title.className = "version-title";
-      title.textContent = version;
-      result = document.createElement("p");
-      result.className = "result";
-      result.setAttribute("aria-live", "polite");
-      row.append(title, result);
-      panelBody.append(row);
-      streamingRows.set(version, result);
+  function showStreaming(text: string): void {
+    if (!streamingResultElement) {
+      panelBody.innerHTML = "";
+      streamingResultElement = document.createElement("p");
+      streamingResultElement.className = "result";
+      streamingResultElement.setAttribute("aria-live", "polite");
+      panelBody.append(streamingResultElement);
+      panelActions.classList.remove("visible");
       panel.classList.add("visible");
       hideButton();
     }
-    result.textContent = text;
+    streamingResultElement.textContent = text;
     panelBody.scrollTop = panelBody.scrollHeight;
     schedulePanelPosition();
   }
 
   function showError(message: string): void {
-    streamingRows.clear();
+    streamingResultElement = null;
     panelBody.innerHTML = "";
     const error = document.createElement("p");
     error.className = "error";
     error.textContent = message;
     panelBody.append(error);
+    panelActions.classList.remove("visible");
     panel.classList.add("visible");
     hideButton();
     setLoading(false);
@@ -779,49 +835,98 @@
   }
 
   function showResult(result: RefinementResult): void {
-    streamingRows.clear();
+    streamingResultElement = null;
     panelBody.innerHTML = "";
-    for (const [version, text] of [["refined", result.refined], ["casual", result.casual], ["professional", result.professional]] as const) {
-      const row = document.createElement("section");
-      row.className = "version-row";
-      const title = document.createElement("h3");
-      title.className = "version-title";
-      title.textContent = version;
-      const content = document.createElement("p");
-      content.className = "result";
-      content.textContent = text;
-      const actions = document.createElement("div");
-      actions.className = "version-actions";
-      const copy = document.createElement("button");
-      copy.className = "action-button";
-      copy.type = "button";
-      copy.textContent = "Copy";
-      copy.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          copy.textContent = "Copied";
-          setTimeout(() => (copy.textContent = "Copy"), 1200);
-        } catch {
-          showError("Chrome could not copy the revision to the clipboard.");
+    const original = sourceSnapshot?.text ?? "";
+    const comparison = compareText(original, result.refined);
+    const views = ["refined", "changes", "original"] as const;
+    type ResultView = (typeof views)[number];
+
+    const tabs = document.createElement("div");
+    tabs.className = "result-tabs";
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "Refinement views");
+
+    const text = document.createElement("p");
+    text.id = "local-english-refiner-result-view";
+    text.className = "result";
+    text.setAttribute("role", "tabpanel");
+
+    const details = document.createElement("div");
+    details.className = "comparison-details";
+
+    const tabButtons = new Map<ResultView, HTMLButtonElement>();
+    const renderView = (view: ResultView): void => {
+      for (const [buttonView, tab] of tabButtons) {
+        const active = buttonView === view;
+        tab.classList.toggle("active", active);
+        tab.setAttribute("aria-selected", String(active));
+        tab.tabIndex = active ? 0 : -1;
+      }
+      text.setAttribute("aria-labelledby", tabButtons.get(view)?.id ?? "");
+
+      text.replaceChildren();
+      details.replaceChildren();
+      if (view === "changes") {
+        for (const part of comparison.parts) {
+          const span = document.createElement("span");
+          if (part.kind !== "unchanged") span.className = `diff-${part.kind}`;
+          span.textContent = part.value;
+          text.append(span);
         }
-      });
-      const apply = document.createElement("button");
-      apply.className = "action-button primary";
-      apply.type = "button";
-      apply.textContent = "Apply";
-      apply.addEventListener("click", () => {
-        try {
-          if (!sourceSnapshot) throw new Error("The original text is no longer available.");
-          applyRevision(sourceSnapshot, text);
-          closePanel();
-        } catch (error) {
-          showError(error instanceof Error ? error.message : "The revision could not be applied.");
+
+        const count = document.createElement("span");
+        count.textContent =
+          comparison.changeCount === 0
+            ? "No text changes"
+            : `${comparison.changeCount} changed ${comparison.changeCount === 1 ? "section" : "sections"}`;
+        details.append(count);
+        if (comparison.changeCount > 0) {
+          for (const [kind, label] of [
+            ["removed", "Removed"],
+            ["added", "Added"],
+          ] as const) {
+            const legend = document.createElement("span");
+            legend.className = "comparison-legend";
+            const swatch = document.createElement("span");
+            swatch.className = `legend-swatch ${kind}`;
+            legend.append(swatch, label);
+            details.append(legend);
+          }
         }
+      } else {
+        text.textContent = view === "refined" ? result.refined : original;
+      }
+      details.hidden = view !== "changes";
+      schedulePanelPosition();
+    };
+
+    for (const view of views) {
+      const tab = document.createElement("button");
+      tab.className = "result-tab";
+      tab.id = `local-english-refiner-${view}-tab`;
+      tab.type = "button";
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", text.id);
+      tab.textContent = view[0]!.toUpperCase() + view.slice(1);
+      tab.addEventListener("click", () => renderView(view));
+      tab.addEventListener("keydown", (event) => {
+        const direction =
+          event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+        if (direction === 0) return;
+        event.preventDefault();
+        const nextIndex =
+          (views.indexOf(view) + direction + views.length) % views.length;
+        const nextView = views[nextIndex]!;
+        renderView(nextView);
+        tabButtons.get(nextView)?.focus();
       });
-      actions.append(copy, apply);
-      row.append(title, content, actions);
-      panelBody.append(row);
+      tabButtons.set(view, tab);
+      tabs.append(tab);
     }
+
+    panelBody.append(tabs, text, details);
+    renderView("refined");
 
     const tokensPerSecond = result.metrics?.outputTokensPerSecond;
     const totalDurationMs = result.metrics?.totalDurationMs;
@@ -836,6 +941,8 @@
       panelBody.append(metrics);
     }
 
+    panel.dataset.refined = result.refined;
+    panelActions.classList.add("visible");
     panel.classList.add("visible");
     hideButton();
     setLoading(false);
@@ -844,12 +951,12 @@
 
   function requestRefinement(
     text: string,
-    onDelta: (version: string, accumulatedText: string) => void,
+    onDelta: (accumulatedText: string) => void,
     onStarting: () => void,
   ): Promise<RefinementResult> {
     return new Promise<RefinementResult>((resolve, reject) => {
       const port = chrome.runtime.connect({ name: "refine-english-stream" });
-      const accumulated = new Map<string, string>();
+      let accumulated = "";
       let settled = false;
 
       const cleanup = () => {
@@ -876,10 +983,11 @@
           return;
         }
         if (event.type === "delta") {
-          const version = "version" in event && typeof event.version === "string" ? event.version : "refined";
-          const value = (accumulated.get(version) ?? "") + ("delta" in event && typeof event.delta === "string" ? event.delta : "");
-          accumulated.set(version, value);
-          onDelta(version, value);
+          accumulated +=
+            "delta" in event && typeof event.delta === "string"
+              ? event.delta
+              : "";
+          onDelta(accumulated);
           return;
         }
         if (event.type === "error") {
@@ -959,6 +1067,32 @@
   });
 
   closeButton.addEventListener("click", closePanel);
+
+  copyButton.addEventListener("click", async () => {
+    const revised = panel.dataset.refined || "";
+    try {
+      await navigator.clipboard.writeText(revised);
+      copyButton.textContent = "Copied";
+      setTimeout(() => (copyButton.textContent = "Copy"), 1200);
+    } catch {
+      showError("Chrome could not copy the revision to the clipboard.");
+    }
+  });
+
+  applyButton.addEventListener("click", () => {
+    try {
+      if (!sourceSnapshot)
+        throw new Error("The original text is no longer available.");
+      applyRevision(sourceSnapshot, panel.dataset.refined || "");
+      closePanel();
+    } catch (error: unknown) {
+      showError(
+        error instanceof Error
+          ? error.message
+          : "The revision could not be applied.",
+      );
+    }
+  });
 
   let pointerFrame = 0;
   if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
