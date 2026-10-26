@@ -295,7 +295,7 @@ import { compareText } from "./text-diff.ts";
       <span class="panel-mark">${faceSvg}</span>
       <button class="close-button" type="button" aria-label="Close">✕</button>
     </header>
-    <div class="panel-body"><div class="status"><span class="status-dot"></span><span>Refining locally…</span></div></div>
+    <div class="panel-body"><div class="status"><span class="status-dot"></span><span>Refining…</span></div></div>
     <footer class="panel-actions">
       <button class="action-button copy-button" type="button">Copy</button>
       <button class="action-button primary apply-button" type="button">Apply</button>
@@ -793,7 +793,7 @@ import { compareText } from "./text-diff.ts";
     dispatchEditEvents(snapshot.editable, revisedText);
   }
 
-  function showLoading(message = "Refining locally…") {
+  function showLoading(message = "Refining…") {
     setLoading(true);
     streamingResultElement = null;
     panelBody.innerHTML = `<div class="status"><span class="status-dot"></span><span></span></div>`;
