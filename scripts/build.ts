@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, cp, mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { build } from "esbuild";
@@ -57,5 +57,10 @@ await copyFile(
   resolve(root, "extension/options.html"),
   resolve(output, "extension/options.html"),
 );
+
+await cp(resolve(root, "extension/icons"), resolve(output, "extension/icons"), {
+  recursive: true,
+  filter: (source) => !source.endsWith(".svg"),
+});
 
 console.log("Built backend, native host, and Chrome extension in dist/.");
