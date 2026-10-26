@@ -118,7 +118,7 @@ import { compareText } from "./text-diff.ts";
     .panel {
       position: fixed;
       display: none;
-      width: min(390px, calc(100vw - 24px));
+      width: min(500px, calc(100vw - 24px));
       max-height: min(440px, calc(100vh - 24px));
       overflow: hidden;
       border: 1px solid #e2e8f0;
@@ -672,7 +672,7 @@ import { compareText } from "./text-diff.ts";
   function positionPanel() {
     if (!activeSelection) return;
     const panelRect = panel.getBoundingClientRect();
-    const width = panelRect.width || Math.min(390, innerWidth - 24);
+    const width = panelRect.width || Math.min(500, innerWidth - 24);
     const height = panelRect.height;
     const selectionRect = activeSelection.rect;
     const maxLeft = innerWidth - width - PANEL_GAP;
