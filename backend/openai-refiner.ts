@@ -1,6 +1,5 @@
 import {
-  systemPromptFor,
-  userPromptFor,
+  SYSTEM_PROMPT,
   type GenerationOptions,
   type GenerationResult,
   type TextRefiner,
@@ -69,8 +68,8 @@ export class OpenAIRefiner implements TextRefiner {
       },
       body: JSON.stringify({
         model: this.model,
-        instructions: systemPromptFor(options.style),
-        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: userPromptFor(text) }] }],
+        instructions: SYSTEM_PROMPT,
+        input: [{ type: "message", role: "user", content: [{ type: "input_text", text }] }],
         stream: true,
         store: false,
       }),

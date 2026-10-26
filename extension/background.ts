@@ -23,9 +23,8 @@ interface ApiError {
 type StreamEvent =
   | { type: "starting" }
   | { type: "start"; model: string }
-  | { type: "version-start"; version: "refined" | "casual" | "professional" }
-  | { type: "delta"; version: "refined" | "casual" | "professional"; delta: string }
-  | { type: "done"; refined: string; casual: string; professional: string; model: string; metrics: Record<string, number> }
+  | { type: "delta"; delta: string }
+  | { type: "done"; refined: string; model: string; metrics: Record<string, number> }
   | { type: "error"; error: string };
 
 function errorMessage(error: unknown, fallback: string): string {
